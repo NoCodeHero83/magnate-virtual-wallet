@@ -24,6 +24,7 @@ import { useTheme } from "../../context/ThemeContext";
 import { useAuth } from "../../context/AuthContext";
 import * as accountService from "../../services/account.service";
 import { supabase } from "../../lib/supabase";
+import { getDisplayName } from "../../utils/user";
 
 const createStyles = (colors: any) =>
   StyleSheet.create({
@@ -195,9 +196,23 @@ export default function ProfileScreen() {
     }
   };
 
+  const company = user?.account_type === "business" ? user.business_profile : null;
+  const formatCuit = (cuit?: string | null) =>
+    cuit && cuit.length === 11 ? `${cuit.slice(0, 2)}-${cuit.slice(2, 10)}-${cuit.slice(10)}` : cuit || "No registrado";
+  const formatDate = (iso?: string | null) => {
+    if (!iso) return "No registrada";
+    const [y, m, d] = iso.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
   const currentUser = {
-    name: user ? `${user.first_name} ${user.last_name}`.trim() : "Usuario",
-    subtitle: "Usuario", // Could be enriched later
+    name: getDisplayName(user),
+    subtitle:
+      user?.verification_status === "pending"
+        ? "Cuenta en revisión"
+        : company
+          ? "Persona Jurídica"
+          : "Persona Física",
     isVerified: user?.verification_status === "verified",
     cuit: user?.cuit_cuil || "No registrado",
     dni: user?.dni || "No registrado",
@@ -270,10 +285,25 @@ export default function ProfileScreen() {
           {/* Alias Management */}
           <AliasManagement userCuit={currentUser.cuit.replace(/-/g, "")} />
 
+          {/* Company (Persona Jurídica) */}
+          {company && (
+            <InfoCard
+              title="Empresa"
+              fields={[
+                { label: "Razón social", value: company.legal_name },
+                ...(company.trade_name ? [{ label: "Nombre de fantasía", value: company.trade_name }] : []),
+                { label: "CUIT", value: formatCuit(company.cuit) },
+                { label: "Tipo societario", value: company.legal_entity?.name || company.legal_entity_type },
+                { label: "Fecha de inscripción", value: formatDate(company.incorporation_date) },
+              ]}
+            />
+          )}
+
           {/* Identity */}
           <InfoCard
-            title="Identidad"
+            title={company ? "Representante legal" : "Identidad"}
             fields={[
+              ...(company ? [{ label: "Nombre", value: `${user?.first_name ?? ""} ${user?.last_name ?? ""}`.trim() }] : []),
               { label: "DNI", value: currentUser.dni },
               { label: "CUIT", value: currentUser.cuit },
             ]}

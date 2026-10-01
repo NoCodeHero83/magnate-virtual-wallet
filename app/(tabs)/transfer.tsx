@@ -21,8 +21,9 @@ import { getAccountLimits } from "../../services/account.service";
 import { AccountLimit } from "../../types/database.types";
 import { parseAmount, formatCurrency } from "../../utils/formatters";
 import { getSupportEmail } from "../../services/settings.service";
+import { withOperationalAccount } from '../../components/account/AccountStatusGate';
 
-export default function TransferScreen() {
+function TransferScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { account } = useAuth();
@@ -295,3 +296,5 @@ const createStyles = (colors: any) =>
       lineHeight: 18,
     },
   });
+
+export default withOperationalAccount(TransferScreen);

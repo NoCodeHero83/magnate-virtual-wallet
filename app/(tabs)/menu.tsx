@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenHeader } from '../../components/layout';
 import { spacing, borderRadius, typography } from '../../theme';
+import { getGreetingName } from '../../utils/user';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { AlertDialog } from '../../components/ui';
@@ -82,7 +83,7 @@ export default function MenuScreen() {
             <ScreenHeader
                 title="Menú"
                 showBackButton={true}
-                userName={user?.first_name || "Usuario"}
+                userName={getGreetingName(user)}
                 onBack={() => {
                     if (router.canGoBack()) {
                         router.back();

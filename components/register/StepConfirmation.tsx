@@ -5,10 +5,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Button } from '../ui/Button';
 import { colors, spacing, borderRadius, typography } from '../../theme';
-import { registerUser } from '../../services/auth.service';
-import { useAuth } from '../../context/AuthContext';
-import { getSignedDocumentUrlWithRetry } from '../../services/zapsign.service';
+import { registerUser, CompanyRegisterData } from '../../services/auth.service';
 import { supabase } from '../../lib/supabase';
+import type { UserAccountType } from '../../types/database.types';
 
 interface StepConfirmationProps {
     data: {
@@ -22,23 +21,32 @@ interface StepConfirmationProps {
         zapsign_data?: any;
     };
     pin: string;
+    accountType: UserAccountType;
+    company?: CompanyRegisterData;
 }
 
-export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin }) => {
+export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, accountType, company }) => {
     const insets = useSafeAreaInsets();
-    const { login } = useAuth();
     const [status, setStatus] = useState<'processing' | 'success' | 'error'>('processing');
     const [errorMsg, setErrorMsg] = useState('');
+    const [requiresApproval, setRequiresApproval] = useState(false);
 
     useEffect(() => {
         const performRegistration = async () => {
             try {
                 const result = await registerUser({
                     ...data,
-                    pin
+                    pin,
+                    account_type: accountType,
+                    company,
                 });
 
                 if (result.success) {
+                    // Avisar si la cuenta queda en revisión (según la configuración del admin)
+                    const { data: needsApproval } = await supabase.rpc('signup_requires_approval', {
+                        p_account_type: accountType,
+                    } as any);
+                    setRequiresApproval(needsApproval === true);
                     setStatus('success');
                     // En este punto no realizamos auto-login: forzamos verificación de email en todos los entornos
                 } else {
@@ -118,6 +126,17 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin })
                     Revisa tu bandeja de entrada y haz clic en el enlace de verificación.
                 </Text>
             </View>
+
+            {requiresApproval && (
+                <View style={styles.reviewBox}>
+                    <Ionicons name="time-outline" size={22} color={colors.warning} />
+                    <Text style={styles.reviewText}>
+                        {accountType === 'business'
+                            ? 'Revisaremos los datos de tu empresa. Podrás ingresar a la app, pero no podrás enviar ni recibir dinero hasta que tu cuenta sea aprobada. Te avisaremos por email.'
+                            : 'Revisaremos tus datos. Podrás ingresar a la app, pero no podrás enviar ni recibir dinero hasta que tu cuenta sea aprobada. Te avisaremos por email.'}
+                    </Text>
+                </View>
+            )}
 
             <Button
                 onPress={() => router.replace('/(auth)/login')}
@@ -268,6 +287,24 @@ const styles = StyleSheet.create({
     button: {
         width: '100%',
         height: 56,
+    },
+    reviewBox: {
+        flexDirection: 'row',
+        gap: spacing.sm,
+        backgroundColor: colors.warningAlpha[10],
+        borderWidth: 1,
+        borderColor: colors.warningAlpha[40],
+        borderRadius: borderRadius.xl,
+        padding: spacing.md,
+        width: '100%',
+        marginTop: -spacing.md,
+        marginBottom: spacing.xl,
+    },
+    reviewText: {
+        flex: 1,
+        fontSize: 13,
+        lineHeight: 19,
+        color: colors.foreground,
     },
     footer: {
         flexDirection: 'row',

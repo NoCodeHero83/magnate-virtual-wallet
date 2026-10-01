@@ -22,6 +22,7 @@ import {
   Account,
   UserAuthCredential,
   VerificationStatus,
+  UserAccountType,
   UserDevice,
 } from "../types/database.types";
 import * as SecureStore from "expo-secure-store";
@@ -33,7 +34,17 @@ export interface LoginCredentials {
   pin: string;
 }
 
+export interface CompanyRegisterData {
+  company_cuit: string;
+  /** YYYY-MM-DD */
+  incorporation_date: string;
+  legal_entity_type: string;
+  legal_name: string;
+  trade_name?: string;
+}
+
 export interface RegisterData {
+  account_type?: UserAccountType;
   nombres: string;
   apellidos: string;
   email: string;
@@ -44,6 +55,8 @@ export interface RegisterData {
   zapsign_doc_token?: string;
   zapsign_contract_url?: string;
   zapsign_data?: any;
+  /** Requerido cuando account_type = 'business' */
+  company?: CompanyRegisterData;
 }
 
 // Global state for manual OTP (Resend flow)
@@ -62,6 +75,8 @@ export interface LoginUserData {
   pin_hash: string;
   verification_status: VerificationStatus;
   auto_password_encrypted: string | null;
+  account_type?: UserAccountType;
+  status_reason?: string | null;
 }
 
 // Cuenta de prueba de Play Store — siempre bypassa verificación de dispositivo
@@ -226,7 +241,16 @@ export async function loginWithPin(
       return { success: false, error: "Esta cuenta se encuentra suspendida." };
     }
 
-    if (user.verification_status !== "verified") {
+    if (user.verification_status === "rejected") {
+      const reason = user.status_reason ? `\nMotivo: ${user.status_reason}` : "";
+      return {
+        success: false,
+        error: `Tu solicitud de cuenta fue rechazada.${reason}\nSi crees que es un error, contacta a soporte.`,
+      };
+    }
+
+    // "pending": puede ingresar, pero no operar hasta que un administrador apruebe la cuenta
+    if (user.verification_status !== "verified" && user.verification_status !== "pending") {
       return { success: false, error: "Cuenta pendiente de verificación" };
     }
 
@@ -296,6 +320,22 @@ export async function registerUser(data: RegisterData): Promise<AuthResult> {
     const cleanDni = data.dni.replace(/\D/g, "");
     const cleanCuit = data.cuit.replace(/\D/g, "");
     const cleanPhone = data.telefono.trim();
+    const accountType: UserAccountType = data.account_type ?? "personal";
+
+    if (accountType === "business" && !data.company) {
+      return { success: false, error: "Faltan los datos de la empresa" };
+    }
+
+    const companyMetadata =
+      accountType === "business" && data.company
+        ? {
+            company_cuit: data.company.company_cuit.replace(/\D/g, ""),
+            incorporation_date: data.company.incorporation_date,
+            legal_entity_type: data.company.legal_entity_type,
+            legal_name: data.company.legal_name.trim(),
+            trade_name: data.company.trade_name?.trim() || null,
+          }
+        : {};
 
     // Generamos password seguro para el auth.users
     const autoPassword = await generateSecurePassword(32);
@@ -320,6 +360,9 @@ export async function registerUser(data: RegisterData): Promise<AuthResult> {
           zapsign_verification_id: data.zapsign_doc_token || null,
           zapsign_contract_url: data.zapsign_contract_url || null,
           zapsign_data: data.zapsign_data || null,
+          // Tipo de cuenta + datos de empresa (los valida y guarda el trigger handle_new_user)
+          account_type: accountType,
+          ...companyMetadata,
         },
       },
 });
@@ -333,6 +376,17 @@ export async function registerUser(data: RegisterData): Promise<AuthResult> {
       const details = anyErr?.details ? ` | ${anyErr.details}` : '';
       const fullMessage = `${authError.message}${code}${hint}${details}`;
       console.error('[AUTH] signUp error:', anyErr);
+      // El trigger de la BD rechaza CUIT de empresa duplicado o datos inválidos;
+      // GoTrue lo devuelve como "Database error saving new user"
+      if (authError.message.includes("COMPANY_CUIT_EXISTS")) {
+        return { success: false, error: "Ya existe una cuenta registrada con el CUIT de esa empresa." };
+      }
+      if (accountType === "business" && /database error/i.test(authError.message)) {
+        return {
+          success: false,
+          error: "No pudimos crear la cuenta de la empresa. Verifica los datos: puede que el CUIT de la empresa ya esté registrado.",
+        };
+      }
       return { success: false, error: fullMessage };
     }
 

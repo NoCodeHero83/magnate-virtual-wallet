@@ -11,6 +11,7 @@ import { SearchBar, FilterChips, FilterType, DateRangeFilter } from '../../compo
 import { TransactionItem } from '../../components/dashboard';
 import { TransactionDetailModal } from '../../components/dashboard';
 import { formatBalance } from '../../utils/formatters';
+import { getDisplayName } from '../../utils/user';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { transactionService } from '../../services/transaction.service';
@@ -87,7 +88,8 @@ export default function MovementsScreen() {
 
             const result = await statementService.generateAndShare({
                 accountId: account.id,
-                accountHolderName: `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Usuario',
+                // Estado de cuenta: razón social para empresas
+                accountHolderName: user?.account_type === 'business' && user.business_profile ? user.business_profile.legal_name : getDisplayName(user),
                 balance: account.balance,
                 filters,
             });

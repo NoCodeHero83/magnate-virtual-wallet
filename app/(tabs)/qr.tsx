@@ -11,8 +11,9 @@ import { AlertDialog } from '../../components/ui';
 import { QRScannerOverlay } from '../../components/qr/QRScannerOverlay';
 import { QRProcessingState } from '../../components/qr/QRProcessingState';
 import { useQRHandler } from '../../hooks/useQRHandler';
+import { withOperationalAccount } from '../../components/account/AccountStatusGate';
 
-export default function QrScreen() {
+function QrScreen() {
     const { colors } = useTheme();
     const [permission, requestPermission] = useCameraPermissions();
     const [scanned, setScanned] = useState(false);
@@ -199,3 +200,5 @@ const createStyles = (colors: any, insets: any) => StyleSheet.create({
         fontWeight: '600',
     },
 });
+
+export default withOperationalAccount(QrScreen);

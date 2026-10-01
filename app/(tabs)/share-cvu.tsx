@@ -18,6 +18,7 @@ import * as Clipboard from 'expo-clipboard';
 import { ScreenHeader } from '../../components/layout';
 import { Button, AlertDialog } from '../../components/ui';
 import { spacing, borderRadius, typography } from '../../theme';
+import { getDisplayName } from '../../utils/user';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import QRCode from 'react-native-qrcode-svg';
@@ -70,7 +71,7 @@ export default function ShareCvuScreen() {
     }, [account?.id]);
 
     const accountData = {
-        titular: user ? `${user.first_name} ${user.last_name}` : "Usuario Magnate",
+        titular: user ? (user.account_type === "business" && user.business_profile ? user.business_profile.legal_name : getDisplayName(user)) : "Usuario Magnate",
         cvu: account?.cvu || "0000000000000000000000",
         alias: account?.alias || "sin.alias.asignado",
     };

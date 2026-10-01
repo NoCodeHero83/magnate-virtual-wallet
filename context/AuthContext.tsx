@@ -1,10 +1,14 @@
 // contexts/AuthContext.tsx
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { User, Account, AccountWithType } from '../types/database.types';
 import { loginWithPin as loginService } from '../services/auth.service';
 import { saveLastUser } from '../services/storage.service';
 import { oneSignalService } from '../services/oneSignalService';
+import { getDisplayName } from '../utils/user';
+
+// users + perfil de empresa (1:1, solo para Persona Jurídica)
+const USER_SELECT = '*, business_profile:business_profiles(*, legal_entity:legal_entity_types(name))';
 
 interface AuthContextType {
   user: User | null;
@@ -31,6 +35,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isAuthenticated = !!session && !!user && !pendingDeviceVerification;
 
+  // Estado actual para comparar en el listener de realtime (payload.old no trae columnas sin REPLICA IDENTITY FULL)
+  const statusRef = useRef<string | undefined>(undefined);
+  statusRef.current = user?.verification_status;
+
   useEffect(() => {
     checkSession();
 
@@ -54,6 +62,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // Escuchar cambios de estado de la cuenta (aprobación / rechazo / suspensión por un admin)
+  useEffect(() => {
+    const userId = user?.id;
+    if (!userId) return;
+
+    const channel = supabase
+      .channel(`user-status-${userId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'users', filter: `id=eq.${userId}` },
+        (payload: any) => {
+          const prevStatus = statusRef.current;
+          const newStatus = payload.new?.verification_status;
+          if (!newStatus || newStatus === prevStatus) return;
+
+          if (newStatus === 'suspended' || newStatus === 'rejected') {
+            logout();
+          } else {
+            // Recargar usuario y cuenta (la cuenta se activa al aprobar)
+            loadUserData(userId);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
 
   const checkSession = async () => {
     try {
@@ -95,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const { data, error } = await supabase
             .from('users')
-            .select('*')
+            .select(USER_SELECT)
             .eq('id', userId)
             .single();
 
@@ -109,7 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             throw error;
           }
-          userData = data;
+          userData = data as User;
         } catch (innerError: any) {
           // Handle network errors or other non-supabase errors if needed
           if (innerError.code === 'PGRST116') {
@@ -126,11 +164,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       // Save for "Remember Me"
       if (userData) {
+        const isBusiness = userData.account_type === 'business';
         saveLastUser({
-          email: (userData as any).email,
-          firstName: (userData as any).first_name,
-          lastName: (userData as any).last_name,
-          avatarUrl: (userData as any).photo_url
+          email: userData.email,
+          // Para empresas se guarda el nombre a mostrar completo en firstName
+          firstName: isBusiness ? getDisplayName(userData) : userData.first_name,
+          lastName: isBusiness ? '' : userData.last_name,
+          avatarUrl: userData.photo_url ?? undefined
         }).catch(() => { });
       }
 
@@ -162,7 +202,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             dni: metadata.dni || '',
             cuit_cuil: metadata.cuit || '',
             pin_hash: metadata.pin_hash || '',
-            verification_status: 'verified', // Assume verified if auth works
+            // Sin perfil en la BD no sabemos el estado real: se asume pendiente (no opera)
+            verification_status: 'pending',
+            account_type: metadata.account_type === 'business' ? 'business' : 'personal',
+            status_reason: null,
+            business_profile: null,
             web_access_enabled: false,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),

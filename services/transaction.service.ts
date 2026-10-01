@@ -132,6 +132,13 @@ export const transactionService = {
 
     if (error) {
       console.error("Error processing transfer:", error);
+      // Mensajes legibles para los errores de cuentas no habilitadas (pendientes de aprobación, bloqueadas)
+      if (error.message?.includes("DESTINATION_NOT_ACTIVE")) {
+        throw new Error("La cuenta destino no está habilitada para recibir transferencias.");
+      }
+      if (error.message?.includes("ACCOUNT_NOT_ACTIVE")) {
+        throw new Error("Tu cuenta no está habilitada para operar. Si está en revisión, te avisaremos cuando sea aprobada.");
+      }
       throw error;
     }
 

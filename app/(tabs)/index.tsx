@@ -12,6 +12,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import { useAccount } from '../../hooks/useAccount';
+import { AccountStatusBanner } from '../../components/account/AccountStatusGate';
+import { getDisplayName } from '../../utils/user';
 
 export default function DashboardScreen() {
     const { colors, isDark } = useTheme();
@@ -43,8 +45,10 @@ export default function DashboardScreen() {
             >
                 <ScreenHeader
                     variant="dashboard"
-                    userName={user ? `${user.first_name} ${user.last_name}`.trim() : "Usuario"}
+                    userName={getDisplayName(user)}
                 />
+
+                <AccountStatusBanner />
 
                 <View style={styles.section}>
                     <BalanceCard />

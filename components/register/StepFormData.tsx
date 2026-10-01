@@ -32,6 +32,8 @@ interface StepFormDataProps {
   onChange: (field: keyof FormData, value: any) => void;
   onContinue: () => void;
   isValid: boolean;
+  title?: string;
+  subtitle?: string;
 }
 
 export const StepFormData: React.FC<StepFormDataProps> = ({
@@ -39,6 +41,8 @@ export const StepFormData: React.FC<StepFormDataProps> = ({
   onChange,
   onContinue,
   isValid,
+  title = "Datos Personales",
+  subtitle = "Completa tu información para configurar tu perfil de inversor en Magnate.",
 }) => {
   const [alertVisible, setAlertVisible] = React.useState(false);
   const [alertMessage, setAlertMessage] = React.useState("");
@@ -87,11 +91,8 @@ export const StepFormData: React.FC<StepFormDataProps> = ({
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
-        <Text style={styles.title}>Datos Personales</Text>
-        <Text style={styles.subtitle}>
-          Completa tu información para configurar tu perfil de inversor en
-          Magnate.
-        </Text>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.subtitle}>{subtitle}</Text>
       </View>
 
       <View style={styles.form}>

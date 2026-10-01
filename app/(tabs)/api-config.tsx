@@ -19,6 +19,7 @@ import { Button, AlertDialog } from '../../components/ui';
 import { spacing, borderRadius } from '../../theme';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
+import { withOperationalAccount } from '../../components/account/AccountStatusGate';
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
@@ -35,7 +36,7 @@ interface ApiAccessData {
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
-export default function ApiConfigScreen() {
+function ApiConfigScreen() {
     const { colors } = useTheme();
 
     // Estado del backend
@@ -578,3 +579,5 @@ const createStyles = (colors: any) => StyleSheet.create({
     },
     infoHelpText: { fontSize: 11, color: colors.mutedForeground, lineHeight: 18 },
 });
+
+export default withOperationalAccount(ApiConfigScreen);

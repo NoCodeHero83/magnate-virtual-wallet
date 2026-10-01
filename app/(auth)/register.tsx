@@ -1,17 +1,24 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, KeyboardAvoidingView, Platform, Alert, Text } from 'react-native';
+import { View, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { ScreenHeader } from '../../components/layout';
 import { ProgressIndicator } from '../../components/register/ProgressIndicator';
+import { StepAccountType } from '../../components/register/StepAccountType';
 import { StepFormData } from '../../components/register/StepFormData';
+import {
+    StepCompanyData,
+    CompanyFormData,
+    emptyCompanyFormData,
+    toISODate,
+} from '../../components/register/StepCompanyData';
 import { StepEmailVerification } from '../../components/register/StepEmailVerification';
 import { StepPinCreation } from '../../components/register/StepPinCreation';
 import { StepConfirmation } from '../../components/register/StepConfirmation';
 import { colors } from '../../theme';
-import { registerUser } from '../../services/auth.service';
-import { useAuth } from '../../context/AuthContext';
 import { isTestEnv } from '../../config/environment';
+import type { UserAccountType } from '../../types/database.types';
+import type { CompanyRegisterData } from '../../services/auth.service';
 import {
     validateEmail,
     validateDNI,
@@ -32,20 +39,46 @@ interface FormData {
     zapsign_data?: any;
 }
 
+type StepId = 'type' | 'form' | 'company' | 'email' | 'pin' | 'confirm';
+
+const STEP_SEQUENCES: Record<UserAccountType, StepId[]> = {
+    personal: ['type', 'form', 'email', 'pin', 'confirm'],
+    business: ['type', 'form', 'company', 'email', 'pin', 'confirm'],
+};
+
+const STEP_TITLES: Record<StepId, string> = {
+    type: 'Crear Cuenta',
+    form: 'Crear Cuenta',
+    company: 'Datos de la Empresa',
+    email: 'Verificar Correo',
+    pin: 'PIN de Seguridad',
+    confirm: 'Confirmación',
+};
+
 export default function RegisterScreen() {
     const insets = useSafeAreaInsets();
-    const { login } = useAuth();
-    const [step, setStep] = useState(1);
+    const [accountType, setAccountType] = useState<UserAccountType | null>(null);
+    const [step, setStep] = useState<StepId>('type');
     const [formData, setFormData] = useState<FormData>({
-    nombres: '', apellidos: '', email: '', telefono: '+54', dni: '', cuit: '',
-    // zapsign_doc_token y zapsign_contract_url se setean al firmar
-});
+        nombres: '', apellidos: '', email: '', telefono: '+54', dni: '', cuit: '',
+        // zapsign_doc_token y zapsign_contract_url se setean al firmar
+    });
+    const [companyData, setCompanyData] = useState<CompanyFormData>(emptyCompanyFormData);
     const [pin, setPin] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+
+    const steps = STEP_SEQUENCES[accountType ?? 'personal'];
+    const stepIndex = steps.indexOf(step);
+    const isBusiness = accountType === 'business';
+
+    const goNext = () => setStep(steps[Math.min(stepIndex + 1, steps.length - 1)]);
+    const goTo = (id: StepId) => setStep(id);
 
     const handleChange = (field: keyof FormData, value: any) => {
         setFormData(prev => ({ ...prev, [field]: value }));
+    };
+
+    const handleCompanyChange = <K extends keyof CompanyFormData>(field: K, value: CompanyFormData[K]) => {
+        setCompanyData(prev => ({ ...prev, [field]: value }));
     };
 
     const isCuitValid = isTestEnv ? true : validateCUITCUIL(formData.cuit);
@@ -58,90 +91,107 @@ export default function RegisterScreen() {
         validateDNI(formData.dni) &&
         isCuitValid;
 
-    const handleContinueToEmail = () => {
-        if (isFormValid) {
-            setStep(2);
-        }
-    };
-
-    const handleEmailVerified = () => {
-        setStep(3);
+    const handleContinueFromForm = () => {
+        if (isFormValid) goNext();
     };
 
     const handlePinComplete = (createdPin: string) => {
         setPin(createdPin);
-        setStep(4);
+        goNext();
     };
 
     const handleBack = () => {
-        if (step === 1) {
+        if (stepIndex <= 0) {
             router.back();
         } else {
-            setStep(step - 1);
+            setStep(steps[stepIndex - 1]);
         }
     };
 
-    const getStepTitle = () => {
-        switch (step) {
-            case 1: return 'Crear Cuenta';
-            case 2: return 'Verificar Correo';
-            case 3: return 'PIN de Seguridad';
-            case 4: return 'Confirmación';
-            default: return 'Registro';
-        }
-    };
+    const company: CompanyRegisterData | undefined =
+        isBusiness && companyData.incorporation_date && companyData.legal_entity_type
+            ? {
+                company_cuit: companyData.company_cuit,
+                incorporation_date: toISODate(companyData.incorporation_date),
+                legal_entity_type: companyData.legal_entity_type,
+                legal_name: companyData.legal_name,
+                trade_name: companyData.trade_name,
+            }
+            : undefined;
+
+    const isConfirm = step === 'confirm';
 
     return (
         <View style={[styles.container, { paddingTop: insets.top }]}>
             <ScreenHeader
-                title={getStepTitle()}
-                showBackButton={step < 4}
+                title={STEP_TITLES[step]}
+                showBackButton={!isConfirm}
                 onBack={handleBack}
                 showAvatar={false}
                 showMenu={false}
-                centerTitle={step === 4}
+                centerTitle={isConfirm}
             />
 
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={{ flex: 1 }}
             >
-                {step < 4 && <ProgressIndicator currentStep={step} totalSteps={4} />}
-
-                {/* Mostrar error si existe */}
-                {error && step === 2 && (
-                    <View style={styles.errorBanner}>
-                        <Text style={styles.errorText}>{error}</Text>
-                    </View>
+                {!isConfirm && (
+                    <ProgressIndicator currentStep={stepIndex + 1} totalSteps={steps.length - 1} />
                 )}
 
                 <View style={styles.content}>
-                    {step === 1 && (
+                    {step === 'type' && (
+                        <StepAccountType
+                            value={accountType}
+                            onChange={setAccountType}
+                            onContinue={() => accountType && goNext()}
+                        />
+                    )}
+
+                    {step === 'form' && (
                         <StepFormData
                             formData={formData}
                             onChange={handleChange}
-                            onContinue={handleContinueToEmail}
+                            onContinue={handleContinueFromForm}
                             isValid={isFormValid}
+                            {...(isBusiness && {
+                                title: 'Representante legal',
+                                subtitle: 'Datos de la persona que abre y opera la cuenta en nombre de la empresa.',
+                            })}
                         />
                     )}
 
-                    {step === 2 && (
+                    {step === 'company' && (
+                        <StepCompanyData
+                            data={companyData}
+                            onChange={handleCompanyChange}
+                            onContinue={goNext}
+                        />
+                    )}
+
+                    {step === 'email' && (
                         <StepEmailVerification
                             email={formData.email}
-                            onVerified={handleEmailVerified}
+                            onVerified={goNext}
                         />
                     )}
 
-                    {step === 3 && (
+                    {step === 'pin' && (
                         <StepPinCreation
                             onComplete={handlePinComplete}
-                            onBack={() => setStep(1)}
-                            loading={loading}
+                            onBack={() => goTo('form')}
+                            loading={false}
                         />
                     )}
 
-                    {step === 4 && (
-                        <StepConfirmation data={formData} pin={pin} />
+                    {isConfirm && (
+                        <StepConfirmation
+                            data={formData}
+                            pin={pin}
+                            accountType={accountType ?? 'personal'}
+                            company={company}
+                        />
                     )}
                 </View>
             </KeyboardAvoidingView>
@@ -156,19 +206,5 @@ const styles = StyleSheet.create({
     },
     content: {
         flex: 1,
-    },
-    errorBanner: {
-        backgroundColor: colors.destructive + '20',
-        padding: 12,
-        marginHorizontal: 16,
-        marginTop: 8,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: colors.destructive,
-    },
-    errorText: {
-        color: colors.destructive,
-        fontSize: 14,
-        textAlign: 'center',
     },
 });

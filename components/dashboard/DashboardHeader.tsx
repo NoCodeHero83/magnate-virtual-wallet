@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { colors, spacing, typography, borderRadius } from '../../theme';
+import { getDisplayName } from '../../utils/user';
 import { Logo } from '../Logo';
 import { Avatar } from '../ui';
 
@@ -15,7 +16,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({
     userName: userNameProp
 }) => {
     const { user, session } = useAuth();
-    const fullName = user ? `${user.first_name} ${user.last_name}`.trim() : (userNameProp || "Usuario");
+    const fullName = user ? getDisplayName(user) : (userNameProp || "Usuario");
     const avatarUrl = user?.photo_url || session?.user?.user_metadata?.avatar_url;
     return (
         <View style={styles.container}>

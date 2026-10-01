@@ -23,8 +23,9 @@ import { Button, AlertDialog } from "../../components/ui";
 import { useAuth } from "../../context/AuthContext";
 import { transactionService } from "../../services/transaction.service";
 import { parseAmount } from "../../utils/formatters";
+import { withOperationalAccount } from '../../components/account/AccountStatusGate';
 
-export default function ConfirmScreen() {
+function ConfirmScreen() {
   const { account } = useAuth();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -331,3 +332,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
+
+export default withOperationalAccount(ConfirmScreen);

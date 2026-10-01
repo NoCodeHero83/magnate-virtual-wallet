@@ -16,6 +16,7 @@ export type VerificationStatus =
   | "rejected"
   | "suspended";
 export type AccountStatus = "active" | "blocked" | "suspended" | "closed";
+export type UserAccountType = "personal" | "business";
 export type TransactionStatus =
   | "pending"
   | "processing"
@@ -46,12 +47,37 @@ export interface User {
   web_password_hash: string | null;
   web_access_enabled_at: string | null;
   verification_status: VerificationStatus;
+  account_type: UserAccountType;
+  /** Motivo del estado (ej. motivo de rechazo). 'pending_approval' mientras espera revisión */
+  status_reason: string | null;
   zapsign_verification_id: string | null;
   zapsign_verified_at: string | null;
   zapsign_data: Json | null;
   photo_url: string | null;
   created_at: string;
   updated_at: string;
+  /** Solo para account_type = 'business' (embed de business_profiles) */
+  business_profile?: BusinessProfile | null;
+}
+
+export interface BusinessProfile {
+  user_id: string;
+  cuit: string;
+  incorporation_date: string;
+  legal_entity_type: string;
+  legal_name: string;
+  trade_name: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Embed de legal_entity_types */
+  legal_entity?: { name: string } | null;
+}
+
+export interface LegalEntityType {
+  code: string;
+  name: string;
+  sort_order: number;
+  is_active: boolean;
 }
 
 export interface Account {

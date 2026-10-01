@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { colors as staticColors, spacing, typography, borderRadius } from '../../theme';
+import { getDisplayName } from '../../utils/user';
 import { Logo } from '../Logo';
 import { Avatar } from '../ui';
 import { useTheme } from '../../context/ThemeContext';
@@ -33,7 +34,7 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
     const { user, session } = useAuth();
 
     // Prioritize name from AuthContext user object, then prop, then default
-    const fullName = user ? `${user.first_name} ${user.last_name}`.trim() : (userNameProp || "Usuario");
+    const fullName = user ? getDisplayName(user) : (userNameProp || "Usuario");
     const avatarUrl = user?.photo_url || session?.user?.user_metadata?.avatar_url;
 
     const handleBack = () => {

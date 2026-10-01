@@ -5,3 +5,4 @@ export * from './Avatar';
 export * from './Modal';
 export * from './AlertDialog';
 export * from './Toast';
+export * from './Select';

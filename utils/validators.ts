@@ -59,6 +59,23 @@ export function validateCUITCUIL(cuit: string): boolean {
 }
 
 /**
+ * Valida CUIT de persona jurídica (prefijos 30, 33 o 34 + dígito verificador)
+ */
+export function validateCompanyCUIT(cuit: string): boolean {
+  const cleanCUIT = cuit.replace(/\D/g, '');
+  return ['30', '33', '34'].includes(cleanCUIT.substring(0, 2)) && validateCUITCUIL(cleanCUIT);
+}
+
+/**
+ * Valida razón social / nombre de fantasía: admite letras, números y
+ * signos habituales en nombres de empresas (". , & - ' ( ) /")
+ */
+export function validateCompanyName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length >= 2 && trimmed.length <= 150 && /^[\p{L}\p{N}\s.,&\-'()/]+$/u.test(trimmed);
+}
+
+/**
  * Valida PIN de 6 digitos
  */
 export function validatePIN(pin: string): boolean {
