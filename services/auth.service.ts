@@ -10,7 +10,6 @@ bcrypt.setRandomFallback((len) => {
 
 import { encrypt, decrypt, generateSecurePassword } from "../utils/crypto";
 import { sendOtpEmail } from "./email.service";
-import { incrementPinAttempts, resetPinAttempts } from "./storage.service";
 import {
   generateCBU,
   generateCVU,
@@ -68,15 +67,49 @@ export interface AuthResult {
   userId?: string;
   requireDeviceVerification?: boolean;
 }
-// Tipo para el resultado del RPC get_user_login_data
-export interface LoginUserData {
-  id: string;
-  email: string;
-  pin_hash: string;
-  verification_status: VerificationStatus;
-  auto_password_encrypted: string | null;
-  account_type?: UserAccountType;
+// Resultado del RPC login_with_pin (el PIN se valida en el servidor)
+interface PinLoginResult {
+  success: boolean;
+  error?:
+    | "USER_NOT_FOUND"
+    | "SUSPENDED"
+    | "CORRUPT_CREDENTIALS"
+    | "INVALID_PIN"
+    | "PIN_LOCKED"
+    | "REJECTED"
+    | "NOT_VERIFIED"
+    | "MISSING_CREDENTIALS";
+  attempts_left?: number;
   status_reason?: string | null;
+  user_id?: string;
+  verification_status?: VerificationStatus;
+  account_type?: UserAccountType;
+  auto_password_encrypted?: string;
+}
+
+function pinLoginErrorMessage(result: PinLoginResult): string {
+  switch (result.error) {
+    case "USER_NOT_FOUND":
+      return "Usuario no encontrado";
+    case "SUSPENDED":
+      return "Esta cuenta se encuentra suspendida.";
+    case "CORRUPT_CREDENTIALS":
+      return "Datos de seguridad corruptos";
+    case "INVALID_PIN":
+      return `PIN incorrecto. Intentos restantes: ${result.attempts_left ?? 0}`;
+    case "PIN_LOCKED":
+      return "Has excedido el número de intentos. Cuenta suspendida.";
+    case "REJECTED": {
+      const reason = result.status_reason ? `\nMotivo: ${result.status_reason}` : "";
+      return `Tu solicitud de cuenta fue rechazada.${reason}\nSi crees que es un error, contacta a soporte.`;
+    }
+    case "NOT_VERIFIED":
+      return "Cuenta pendiente de verificación";
+    case "MISSING_CREDENTIALS":
+      return "Error interno: Credenciales inválidas";
+    default:
+      return "Error desconocido";
+  }
 }
 
 // Cuenta de prueba de Play Store — siempre bypassa verificación de dispositivo
@@ -196,69 +229,26 @@ export async function loginWithPin(
   try {
     const normalizedEmail = email.toLowerCase().trim();
 
-    // 1. Usar RPC para buscar datos saltando RLS
-    const { data: userData, error: userError } = await supabase.rpc(
-      "get_user_login_data",
-      { email_input: normalizedEmail } as any,
-    );
+    // 1-4. El servidor valida el PIN, cuenta los intentos (3 fallidos = suspensión)
+    //      y el estado de la cuenta. Solo devuelve la credencial si todo es correcto.
+    //      "pending" puede ingresar, pero no operar hasta que un admin apruebe la cuenta.
+    const { data, error: loginError } = await supabase.rpc("login_with_pin", {
+      p_email: normalizedEmail,
+      p_pin: pin,
+    } as any);
 
-    if (userError) {
+    if (loginError) {
       return { success: false, error: "Error de conexión" };
     }
 
-    // RPC retorna un array, tomamos el primero y lo tipamos
-    const user = userData?.[0] as LoginUserData | undefined;
-    if (!user) {
-      return { success: false, error: "Usuario no encontrado" };
+    const result = data as PinLoginResult | null;
+    if (!result?.success || !result.user_id || !result.auto_password_encrypted) {
+      return { success: false, error: result ? pinLoginErrorMessage(result) : "Error de conexión" };
     }
 
-    // 2. Verificar PIN con bcrypt
-    if (!user.pin_hash) {
-      return { success: false, error: "Datos de seguridad corruptos" };
-    }
-
-    const pinValid = await bcrypt.compare(pin, user.pin_hash);
-    if (!pinValid) {
-      const attempts = await incrementPinAttempts(normalizedEmail);
-      if (attempts >= 3) {
-        await suspendUserAccount(user.id);
-        return {
-          success: false,
-          error: "Has excedido el número de intentos. Cuenta suspendida.",
-        };
-      }
-      return {
-        success: false,
-        error: `PIN incorrecto. Intentos restantes: ${3 - attempts}`,
-      };
-    }
-
-    // PIN correcto, resetear intentos
-    await resetPinAttempts(normalizedEmail);
-
-    // 4. Verificar status
-    if (user.verification_status === "suspended") {
-      return { success: false, error: "Esta cuenta se encuentra suspendida." };
-    }
-
-    if (user.verification_status === "rejected") {
-      const reason = user.status_reason ? `\nMotivo: ${user.status_reason}` : "";
-      return {
-        success: false,
-        error: `Tu solicitud de cuenta fue rechazada.${reason}\nSi crees que es un error, contacta a soporte.`,
-      };
-    }
-
-    // "pending": puede ingresar, pero no operar hasta que un administrador apruebe la cuenta
-    if (user.verification_status !== "verified" && user.verification_status !== "pending") {
-      return { success: false, error: "Cuenta pendiente de verificación" };
-    }
+    const user = { id: result.user_id, auto_password_encrypted: result.auto_password_encrypted };
 
     // 5. Desencriptar la contraseña
-    if (!user.auto_password_encrypted) {
-      return { success: false, error: "Error interno: Credenciales inválidas" };
-    }
-
     const autoPassword = await decrypt(user.auto_password_encrypted);
 
     // 6. Hacer login con Supabase Auth (Must login first to bypass Row Level Security restrictions for the device check)
@@ -286,22 +276,6 @@ export async function loginWithPin(
   }
 }
 
-/**
- * Suspender cuenta de usuario
- */
-export async function suspendUserAccount(userId: string): Promise<AuthResult> {
-  try {
-    const { error } = await supabase.rpc("suspend_user_account", {
-      p_user_id: userId,
-    } as any);
-
-    if (error) throw error;
-    return { success: true };
-  } catch (error: any) {
-    console.error("[AUTH] Error suspending account:", error);
-    return { success: false, error: "No se pudo suspender la cuenta" };
-  }
-}
 
 /**
  * Registro de usuario
