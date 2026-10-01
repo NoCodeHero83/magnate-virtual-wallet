@@ -132,19 +132,19 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
                 const arrayBuffer = await new Response(blob).arrayBuffer();
                 const fileName = `contracts/presignup/${docToken}.pdf`;
 
+                // El bucket "documents" es privado: el registro solo puede subir archivos
+                // nuevos (sin upsert) y se guarda la ruta; el admin lo abre con URL firmada.
                 const { error: uploadError } = await supabase.storage
                     .from('documents')
                     .upload(fileName, arrayBuffer, {
                         contentType: 'application/pdf',
-                        upsert: true,
+                        upsert: false,
                     });
 
-                if (!uploadError) {
-                    const { data: urlData } = supabase.storage
-                        .from('documents')
-                        .getPublicUrl(fileName);
-                    permanentUrl = urlData.publicUrl;
-                    console.log('[BiometricCard] PDF guardado en storage:', permanentUrl);
+                const alreadyUploaded = /exists|duplicate/i.test(uploadError?.message ?? '');
+                if (!uploadError || alreadyUploaded) {
+                    permanentUrl = fileName;
+                    console.log('[BiometricCard] PDF guardado en storage:', fileName);
                 } else {
                     console.error('[BiometricCard] Error subiendo PDF:', uploadError);
                 }

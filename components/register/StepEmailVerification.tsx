@@ -5,9 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { colors, spacing, borderRadius, typography } from '../../theme';
-import { supabase } from '../../lib/supabase';
-import { isTestEnv } from '../../config/environment';
-import { sendPreSignupEmailVerification } from '../../services/email.service';
+import { requestSignupEmailCode, verifySignupEmailCode } from '../../services/email.service';
 
 interface StepEmailVerificationProps {
   email: string;
@@ -19,29 +17,19 @@ export const StepEmailVerification: React.FC<StepEmailVerificationProps> = ({ em
   const [loading, setLoading] = useState(false);
   const [code, setCode] = useState('');
   const [info, setInfo] = useState<string | null>(null);
-  const [testCode, setTestCode] = useState<string | null>(null);
 
   useEffect(() => {
     requestCode();
   }, []);
 
+  // El código se genera, guarda (hash) y valida en el servidor
   const requestCode = async () => {
     try {
       setLoading(true);
       setInfo(null);
-      // Generar código de 6 dígitos (cliente) y encolar notificación al worker para enviar email
-      const generated = Math.floor(100000 + Math.random() * 900000).toString();
-      setTestCode(generated);
       const firstName = email.split('@')[0] || 'Usuario';
-      const res = await sendPreSignupEmailVerification(email.trim(), firstName, generated);
-      if (res.success) {
-        setInfo('Te enviamos un código de 6 dígitos a tu correo.');
-      } else {
-        setInfo('No se pudo enviar el código por correo. Puedes reintentar.');
-      }
-
-      // En sandbox mostrar también el código en pantalla para QA
-      if (isTestEnv) setInfo(prev => (prev ? `${prev}\n(Sandbox: ${generated})` : `Sandbox: ${generated}`));
+      const res = await requestSignupEmailCode(email.trim(), firstName);
+      setInfo(res.success ? 'Te enviamos un código de 6 dígitos a tu correo.' : res.error || 'No se pudo enviar el código.');
     } catch (e) {
       setInfo('Error al solicitar código.');
     } finally {
@@ -50,25 +38,17 @@ export const StepEmailVerification: React.FC<StepEmailVerificationProps> = ({ em
   };
 
   const verifyCode = async () => {
+    if (code.trim().length !== 6) {
+      setInfo('Ingresá el código de 6 dígitos.');
+      return;
+    }
     try {
       setLoading(true);
-      // Intentar verificación con Supabase (si el usuario existe)
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: code.trim(),
-        type: 'email'
-      } as any);
-      if (error) {
-        // En sandbox aceptar el código local como respaldo
-        if (isTestEnv && testCode && code.trim() === testCode) {
-          onVerified();
-        } else {
-          setInfo('Código incorrecto o expirado.');
-        }
-      } else {
-        // Evitar mantener sesión abierta por esta verificación
-        await supabase.auth.signOut();
+      const res = await verifySignupEmailCode(email.trim(), code.trim());
+      if (res.success) {
         onVerified();
+      } else {
+        setInfo(res.error || 'Código incorrecto o expirado.');
       }
     } catch (e) {
       setInfo('Error al verificar el código.');
