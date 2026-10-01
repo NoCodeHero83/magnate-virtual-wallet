@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase";
+import { getDeviceDescriptor } from "./auth.service";
 import {
   Transaction,
   TransactionWithType,
@@ -122,17 +123,22 @@ export const transactionService = {
     concept: string = "",
     paymentMethod: "alias" | "cbu" | "cvu" = "alias",
   ): Promise<any> {
-    const { data, error } = await supabase.rpc("process_transfer", {
+    // Solo desde un dispositivo de confianza (lo valida el servidor con el secreto del dispositivo)
+    const { data, error } = await supabase.rpc("transfer_from_device", {
       p_from_account_id: fromAccountId,
       p_to_identifier: toIdentifier,
       p_amount: amount,
       p_concept: concept,
       p_payment_method: paymentMethod,
+      p_device: await getDeviceDescriptor(),
     } as any);
 
     if (error) {
       console.error("Error processing transfer:", error);
       // Mensajes legibles para los errores de cuentas no habilitadas (pendientes de aprobación, bloqueadas)
+      if (error.message?.includes("DEVICE_NOT_TRUSTED")) {
+        throw new Error("Este dispositivo no está verificado. Cierra sesión y vuelve a ingresar para verificarlo.");
+      }
       if (error.message?.includes("DESTINATION_NOT_ACTIVE")) {
         throw new Error("La cuenta destino no está habilitada para recibir transferencias.");
       }

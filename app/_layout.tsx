@@ -13,7 +13,7 @@ import { InactivityWrapper } from '../components/InactivityWrapper';
 import { UpdateModal } from '../components/UpdateModal';
 
 function RootLayoutNav() {
-    const { session, loading, user, pendingDeviceVerification } = useAuth();
+    const { session, loading, user } = useAuth();
     const segments = useSegments();
     const router = useRouter();
 
@@ -24,12 +24,7 @@ function RootLayoutNav() {
         const inTabsGroup = segments[0] === '(tabs)';
 
         if (session && user) {
-            if (pendingDeviceVerification) {
-                // If user needs to verify device, push them to the verify screen unless they are already there
-                if (segments.join('/') !== '(auth)/verify-device') {
-                    router.replace('/(auth)/verify-device');
-                }
-            } else if (inAuthGroup) {
+            if (inAuthGroup) {
                 // Si hay sesión Y usuario verificado, y estamos en grupo auth (login/register), ir a tabs
                 router.replace('/(tabs)');
             }
@@ -37,7 +32,7 @@ function RootLayoutNav() {
             // Si NO hay sesión y estamos en tabs, ir a login
             router.replace('/(auth)/login');
         }
-    }, [session, loading, segments, user, pendingDeviceVerification]);
+    }, [session, loading, segments, user]);
 
     if (loading) {
         return (

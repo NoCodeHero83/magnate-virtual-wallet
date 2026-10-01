@@ -16,11 +16,9 @@ import { PIN_LENGTH } from "../../constants/app";
 import { ScreenHeader } from "../../components/layout";
 import {
   logout,
-  updatePin,
-  verifyPin,
+  requestPinChangeCode,
+  confirmPinChange,
 } from "../../services/auth.service";
-import { sendPinChangeOtpEmail } from "../../services/email.service";
-import { verifyVerificationOtp } from "../../services/auth.service";
 import { AlertDialog, Toast, Button } from "../../components/ui";
 
 
@@ -46,9 +44,6 @@ export default function ChangePinScreen() {
   const [loading, setLoading] = useState(false);
   const [keypadNumbers, setKeypadNumbers] = useState<number[]>([]);
   const [showLogoutAlert, setShowLogoutAlert] = useState(false);
-  // OTP generado localmente para cambio de PIN
-  const [pendingOtp, setPendingOtp] = useState<string | null>(null);
-  const [otpExpiry, setOtpExpiry] = useState<number | null>(null);
   const [toast, setToast] = useState<{
     visible: boolean;
     message: string;
@@ -69,8 +64,6 @@ export default function ChangePinScreen() {
     setOtpCode("");
     setNewPin("");
     setConfirmPin("");
-    setPendingOtp(null);
-    setOtpExpiry(null);
     setLoading(false);
   }, [])
 );
@@ -131,61 +124,26 @@ export default function ChangePinScreen() {
 
   const handleVerifyCurrentPin = async (pin: string) => {
     setLoading(true);
-    const isValid = await verifyPin(pin);
-    if (isValid) {
-      // Generar OTP localmente y enviarlo con el template correcto
-      const { data: { user } } = await (await import('../../lib/supabase')).supabase.auth.getUser();
-      if (!user?.id) {
-        setLoading(false);
-        showToast("Usuario no autenticado");
-        setCurrentPin("");
-        return;
-      }
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      setPendingOtp(code);
-      setOtpExpiry(Date.now() + 10 * 60 * 1000); // 10 minutos
-      const otpRes = await sendPinChangeOtpEmail(user.id, code);
-      setLoading(false);
-      if (otpRes.success) {
-        showToast("Código enviado a tu email", "success");
-        setStep("otp");
-      } else {
-        showToast(otpRes.error || "No se pudo enviar el código");
-        setCurrentPin("");
-      }
+    // El servidor valida el PIN actual (con bloqueo por intentos) y envía el código
+    const result = await requestPinChangeCode(pin);
+    setLoading(false);
+    if (result.success) {
+      showToast("Código enviado a tu email", "success");
+      setStep("otp");
     } else {
-      setLoading(false);
-      showToast("PIN actual incorrecto");
+      showToast(result.error || "No se pudo enviar el código");
       setCurrentPin("");
     }
   };
 
   const handleVerifyOtp = async (code: string) => {
-    setLoading(true);
-    // Verificar localmente el OTP generado para cambio de PIN
-    let valid = false;
-    if (pendingOtp) {
-      const isExpired = otpExpiry != null && Date.now() > otpExpiry;
-      valid = !isExpired && code === pendingOtp;
-      if (isExpired) {
-        setPendingOtp(null);
-        setOtpExpiry(null);
-      }
-    } else {
-      // Fallback: usar verifyVerificationOtp si no hay pendingOtp
-      const result = await verifyVerificationOtp(code);
-      valid = result.success;
+    // El código se valida en el servidor junto con el nuevo PIN.
+    // Si ya se eligió el nuevo PIN (reintento tras un código incorrecto), confirmar directo.
+    if (newPin.length === PIN_LENGTH && confirmPin === newPin) {
+      await handleUpdatePin(newPin, code);
+      return;
     }
-    setLoading(false);
-    if (valid) {
-      setPendingOtp(null);
-      setOtpExpiry(null);
-      showToast("Código verificado", "success");
-      setStep("new");
-    } else {
-      showToast("Código inválido o expirado");
-      setOtpCode("");
-    }
+    setTimeout(() => setStep("new"), 300);
   };
 
   const handleDelete = () => {
@@ -206,27 +164,38 @@ export default function ChangePinScreen() {
     }
   };
 
-  const handleUpdatePin = async (confirmedPin: string) => {
+  const handleUpdatePin = async (confirmedPin: string, code: string = otpCode) => {
     setLoading(true);
-    const result = await updatePin(confirmedPin);
+    const result = await confirmPinChange(code, confirmedPin);
     setLoading(false);
-
     if (result.success) {
       showToast("PIN actualizado correctamente", "success");
       setTimeout(() => {
         setShowLogoutAlert(true);
       }, 1500);
-    } else {
-      showToast(result.error || "Error al actualizar el PIN");
-      // Reset logic based on error
-      if (result.error?.toLowerCase().includes("actual")) {
+      return;
+    }
+
+    showToast(result.error || "Error al actualizar el PIN");
+    switch (result.code) {
+      case "INVALID_CODE":
+        // Reintentar solo el código, manteniendo el nuevo PIN
+        setOtpCode("");
+        setStep("otp");
+        break;
+      case "SAME_PIN":
+      case "INVALID_NEW_PIN":
+        setNewPin("");
+        setConfirmPin("");
+        setStep("new");
+        break;
+      default:
+        // Código vencido / demasiados intentos / sesión: empezar de nuevo
         setCurrentPin("");
+        setOtpCode("");
         setNewPin("");
         setConfirmPin("");
         setStep("current");
-      } else {
-        setConfirmPin("");
-      }
     }
   };
 

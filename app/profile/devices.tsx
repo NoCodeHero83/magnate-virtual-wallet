@@ -135,7 +135,8 @@ export default function DevicesScreen() {
     };
 
     const renderItem = ({ item }: { item: UserDevice }) => {
-        if (item.status === 'revoked') return null; // No mostrar revocados
+        // Solo dispositivos vinculados (verificados); no revocados ni pendientes de verificar
+        if (item.status !== 'active' || !item.trusted_at) return null;
 
         const isCurrent = currentDeviceId === item.device_id;
 

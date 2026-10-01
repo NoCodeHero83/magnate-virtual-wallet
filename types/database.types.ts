@@ -27,7 +27,7 @@ export type TransactionStatus =
 export type PaymentMethod = "alias" | "cvu" | "cbu" | "qr";
 export type TransactionCategory = "income" | "expense" | "internal";
 export type QRType = "static" | "dynamic";
-export type DeviceStatus = "active" | "inactive" | "revoked";
+export type DeviceStatus = "active" | "inactive" | "revoked" | "pending";
 export type DevicePlatform = "ios" | "android" | "web";
 
 // ============================================================================
@@ -200,6 +200,8 @@ export interface UserDevice {
   registered_at: string;
   revoked_at: string | null;
   revoke_reason: string | null;
+  /** Fecha en que se verificó con el código por email (null = no es de confianza) */
+  trusted_at: string | null;
 }
 
 export interface ApiAccess {

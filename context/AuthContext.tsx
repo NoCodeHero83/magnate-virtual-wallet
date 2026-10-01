@@ -2,7 +2,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
 import { User, Account, AccountWithType } from '../types/database.types';
-import { loginWithPin as loginService } from '../services/auth.service';
+import { loginWithPin as loginService, checkDeviceTrust } from '../services/auth.service';
 import { saveLastUser } from '../services/storage.service';
 import { oneSignalService } from '../services/oneSignalService';
 import { getDisplayName } from '../utils/user';
@@ -16,12 +16,10 @@ interface AuthContextType {
   session: any;
   loading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, pin: string) => Promise<{ success: boolean; error?: string; requireDeviceVerification?: boolean }>;
+  login: (email: string, pin: string) => Promise<{ success: boolean; error?: string; requireDeviceVerification?: boolean; codeSent?: boolean }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   refreshAccount: () => Promise<void>;
-  pendingDeviceVerification: boolean;
-  setPendingDeviceVerification: (val: boolean) => void;
   /** Mensaje a mostrar en el login cuando la sesión se cerró por el estado de la cuenta */
   sessionEndedReason: string | null;
   clearSessionEndedReason: () => void;
@@ -46,10 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [account, setAccount] = useState<AccountWithType | null>(null);
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [pendingDeviceVerification, setPendingDeviceVerification] = useState(false);
   const [sessionEndedReason, setSessionEndedReason] = useState<string | null>(null);
 
-  const isAuthenticated = !!session && !!user && !pendingDeviceVerification;
+  // La sesión solo existe en dispositivos de confianza (el servidor no entrega
+  // la credencial a un dispositivo nuevo hasta validar el código por email)
+  const isAuthenticated = !!session && !!user;
 
   // Estado actual para comparar en el listener de realtime (payload.old no trae columnas sin REPLICA IDENTITY FULL)
   const statusRef = useRef<string | undefined>(undefined);
@@ -117,19 +116,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(session);
 
       if (session?.user) {
-        const email = session.user.email || '';
-        const { isDeviceKnown } = await import('../services/auth.service');
-        const known = await isDeviceKnown(session.user.id, email);
-        
-        if (!known) {
-          const { sendVerificationOtp } = await import('../services/auth.service');
-          await sendVerificationOtp();
-          setPendingDeviceVerification(true);
+        // Sesión guardada: el dispositivo tiene que seguir siendo de confianza
+        // (pudo ser desvinculado desde otro dispositivo o por soporte)
+        const trusted = await checkDeviceTrust();
+        if (!trusted) {
+          await endSession('Por seguridad, vuelve a iniciar sesión para verificar este dispositivo.');
+          return;
         }
 
         await loadUserData(session.user.id);
-        // ✅ Vincular con OneSignal si ya existe sesión activa y dispositivo conocido
-        if (known) await oneSignalService.loginUser(session.user.id);
+        // ✅ Vincular con OneSignal si ya existe sesión activa
+        await oneSignalService.loginUser(session.user.id);
       }
     } catch (error) {
       console.error('Error checking session:', error);
@@ -253,13 +250,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const result = await loginService(email, pin);
 
       if (result.success) {
-        if (result.requireDeviceVerification) {
-          setPendingDeviceVerification(true);
-          return { success: true, requireDeviceVerification: true };
-        } else {
-          setPendingDeviceVerification(false);
-          return { success: true, requireDeviceVerification: false };
-        }
+        // Dispositivo nuevo: todavía no hay sesión, falta el código por email
+        return {
+          success: true,
+          requireDeviceVerification: !!result.requireDeviceVerification,
+          codeSent: result.codeSent,
+        };
       } else {
         return { success: false, error: result.error };
       }
@@ -308,8 +304,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         logout,
         refreshUser,
         refreshAccount,
-        pendingDeviceVerification,
-        setPendingDeviceVerification,
         sessionEndedReason,
         clearSessionEndedReason: () => setSessionEndedReason(null),
       }}

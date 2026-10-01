@@ -176,29 +176,7 @@ class OneSignalService {
             if (rpcError) {
                 console.error('❌ Error al ganar ownership del dispositivo usando RPC:', rpcError);
                 
-                // Fallback extremo por si el RPC no existe aún o falla (solo UPSERT normal sin limpieza agresiva)
-                console.warn('⚠️ Intentando Upsert normal de Fallback...');
-                const deviceData = {
-                    user_id: user.id,
-                    device_id: deviceId, // Secure local device id
-                    player_id: playerId, // OneSignal id
-                    platform: Platform.OS as 'ios' | 'android',
-                    push_enabled: optedIn,
-                    device_os_version: String(Platform.Version),
-                    app_version: Constants.expoConfig?.version || '1.0.0',
-                    last_active_at: new Date().toISOString(),
-                    is_active: true
-                };
-
-                const { error: fallbackError } = await (supabase.from('user_devices') as any).upsert(deviceData, {
-                    onConflict: 'user_id,device_id'
-                });
-
-                if (fallbackError) {
-                     console.error('❌ Error al guardar dispositivo (fallback):', fallbackError);
-                } else {
-                     console.log('✅ Dispositivo guardado en BD (vía Fallback):', playerId);
-                }
+                // Sin fallback: los clientes no pueden escribir user_devices directamente
             } else {
                 console.log('✅ Dispositivo guardado exitosamente en BD (vía RPC):', playerId);
             }

@@ -1,52 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, Input, Toast, ToastType, AlertDialog } from '../../components/ui';
-import { colors, spacing, borderRadius } from '../../theme';
-import { useAuth } from '../../context/AuthContext';
-import { verifyVerificationOtp, registerCurrentDevice, sendVerificationOtp } from '../../services/auth.service';
+import { Button, Input, Toast, ToastType } from '../../components/ui';
+import { colors, spacing } from '../../theme';
+import { verifyDeviceLogin, resendDeviceLoginCode } from '../../services/auth.service';
 import { LogoIcon } from '../../components/LogoIcon';
 
+/** Espera mínima entre códigos (igual que el límite del servidor) */
+const RESEND_COOLDOWN_SECONDS = 60;
+
+/**
+ * Login desde un dispositivo nuevo: no hay sesión hasta validar el código.
+ * El servidor entrega la credencial y marca el dispositivo como de confianza.
+ */
 export default function VerifyDeviceScreen() {
     const router = useRouter();
-    const { setPendingDeviceVerification } = useAuth();
+    const params = useLocalSearchParams<{ email?: string; sent?: string }>();
+    const email = typeof params.email === 'string' ? params.email : '';
+    const codeSent = params.sent !== 'false';
+
     const [otp, setOtp] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [resending, setResending] = useState(false);
+    const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
     const [toast, setToast] = useState({ visible: false, message: '', type: 'info' as ToastType });
 
-    // Send OTP initially if needed (the implementation plan assumes it's sent during login, but good measure to send it here if user specifically requests a resend)
+    const showToast = (message: string, type: ToastType = 'error') => setToast({ visible: true, message, type });
+
+    // Sin email no hay nada que verificar: volver al login
+    useEffect(() => {
+        if (!email) router.replace('/(auth)/login');
+    }, [email]);
+
+    useEffect(() => {
+        if (cooldown <= 0) return;
+        const timer = setTimeout(() => setCooldown((s) => s - 1), 1000);
+        return () => clearTimeout(timer);
+    }, [cooldown]);
 
     const handleVerify = async () => {
-        if (otp.length < 6) {
-            setToast({ visible: true, message: 'Ingrese un código de 6 dígitos válido', type: 'error' });
+        if (otp.length !== 6) {
+            showToast('Ingresa el código de 6 dígitos');
             return;
         }
 
         setIsLoading(true);
         try {
-            const verifyResult = await verifyVerificationOtp(otp);
-            if (!verifyResult.success) {
-                setToast({ visible: true, message: verifyResult.error || 'Código incorrecto', type: 'error' });
-                setIsLoading(false);
+            const result = await verifyDeviceLogin(email, otp);
+            if (!result.success) {
+                showToast(result.error || 'Código incorrecto');
+                setOtp('');
                 return;
             }
-
-            // Register the device securely
-            const registerResult = await registerCurrentDevice();
-            if (!registerResult.success) {
-                setToast({ visible: true, message: registerResult.error || 'Error registrando dispositivo', type: 'error' });
-                setIsLoading(false);
-                return;
-            }
-
-            // Success! Advance
-            setPendingDeviceVerification(false);
+            // Sesión abierta: el layout lleva a la app al cargar el usuario
             router.replace('/(tabs)');
         } catch (error) {
-            setToast({ visible: true, message: 'Ha ocurrido un error inesperado', type: 'error' });
+            showToast('Ha ocurrido un error inesperado');
         } finally {
             setIsLoading(false);
         }
@@ -55,14 +66,19 @@ export default function VerifyDeviceScreen() {
     const handleResend = async () => {
         setResending(true);
         try {
-            const res = await sendVerificationOtp();
+            const res = await resendDeviceLoginCode(email);
             if (res.success) {
-                setToast({ visible: true, message: 'Código reenviado exitosamente', type: 'success' });
+                showToast('Te enviamos un código nuevo', 'success');
+                setOtp('');
+                setCooldown(RESEND_COOLDOWN_SECONDS);
+            } else if (res.loginAgain) {
+                showToast(res.error || 'Vuelve a iniciar sesión');
+                router.replace('/(auth)/login');
             } else {
-                setToast({ visible: true, message: res.error || 'Error al reenviar el correo', type: 'error' });
+                showToast(res.error || 'No se pudo reenviar el código');
             }
         } catch (error) {
-            setToast({ visible: true, message: 'Error al reenviar', type: 'error' });
+            showToast('Error al reenviar');
         } finally {
             setResending(false);
         }
@@ -77,7 +93,7 @@ export default function VerifyDeviceScreen() {
                 onHide={() => setToast(prev => ({ ...prev, visible: false }))}
             />
 
-            <KeyboardAvoidingView 
+            <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.keyboardView}
             >
@@ -86,38 +102,43 @@ export default function VerifyDeviceScreen() {
                         <LogoIcon size={64} />
                         <Text style={styles.title}>Nuevo Dispositivo</Text>
                         <Text style={styles.subtitle}>
-                            No reconocemos este dispositivo. Por tu seguridad, hemos enviado un código de verificación de 6 dígitos a tu correo electrónico registrado.
+                            {codeSent
+                                ? 'No reconocemos este dispositivo. Por tu seguridad, te enviamos un código de 6 dígitos a tu correo electrónico.'
+                                : 'No reconocemos este dispositivo. Ingresa el código de 6 dígitos que te enviamos hace un momento a tu correo electrónico.'}
                         </Text>
                     </View>
 
                     <View style={styles.inputContainer}>
                         <Input
-                            label="Código de Verificación (OTP)"
+                            label="Código de verificación"
                             value={otp}
-                            onChangeText={setOtp}
+                            onChangeText={(text) => setOtp(text.replace(/\D/g, ''))}
                             keyboardType="number-pad"
                             maxLength={6}
-                            placeholder="Ej. 123456"
+                            placeholder="000000"
                             icon={<Ionicons name="keypad-outline" size={20} color={colors.mutedForeground} />}
                         />
                     </View>
 
                     <View style={styles.actions}>
-                        <Button 
-                            onPress={handleVerify} 
-                            loading={isLoading} 
-                            disabled={otp.length < 6 || isLoading}
+                        <Button
+                            onPress={handleVerify}
+                            loading={isLoading}
+                            disabled={otp.length !== 6 || isLoading}
                             style={styles.button}
                         >
                             Verificar Dispositivo
                         </Button>
-                        <Button 
-                            onPress={handleResend} 
-                            variant="ghost" 
-                            disabled={resending}
+                        <Button
+                            onPress={handleResend}
+                            variant="ghost"
+                            disabled={resending || cooldown > 0}
                             loading={resending}
                         >
-                            Reenviar Código
+                            {cooldown > 0 ? `Reenviar código en ${cooldown}s` : 'Reenviar código'}
+                        </Button>
+                        <Button onPress={() => router.replace('/(auth)/login')} variant="ghost">
+                            Volver al inicio de sesión
                         </Button>
                     </View>
                 </View>

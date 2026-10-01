@@ -123,7 +123,14 @@ export default function LoginScreen() {
 
             const result = await login(loginEmail, pin);
 
-            if (result.success) {
+            if (result.success && result.requireDeviceVerification) {
+                // Dispositivo nuevo: validar el código enviado por email
+                router.push({
+                    pathname: '/(auth)/verify-device',
+                    params: { email: loginEmail.trim().toLowerCase(), sent: String(result.codeSent !== false) },
+                });
+                setPin('');
+            } else if (result.success) {
                 router.replace('/(tabs)');
             } else {
                 if (result.error === 'Credenciales incorrectas' || result.error === 'PIN incorrecto' || result.error === 'Usuario no encontrado') {

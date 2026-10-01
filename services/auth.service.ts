@@ -9,7 +9,6 @@ bcrypt.setRandomFallback((len) => {
 });
 
 import { encrypt, decrypt, generateSecurePassword } from "../utils/crypto";
-import { sendOtpEmail } from "./email.service";
 import {
   generateCBU,
   generateCVU,
@@ -27,6 +26,7 @@ import {
 import * as SecureStore from "expo-secure-store";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 
 export interface LoginCredentials {
   email: string;
@@ -58,14 +58,14 @@ export interface RegisterData {
   company?: CompanyRegisterData;
 }
 
-// Global state for manual OTP (Resend flow)
-let tempOtp: { code: string; email: string; expires: number } | null = null;
 
 export interface AuthResult {
   success: boolean;
   error?: string;
   userId?: string;
   requireDeviceVerification?: boolean;
+  /** Login en dispositivo nuevo: si se envió un código nuevo (false = vale el anterior) */
+  codeSent?: boolean;
   /** Registro: estado con el que quedó la cuenta */
   verificationStatus?: VerificationStatus;
 }
@@ -80,8 +80,19 @@ interface PinLoginResult {
     | "PIN_LOCKED"
     | "REJECTED"
     | "NOT_VERIFIED"
-    | "MISSING_CREDENTIALS";
+    | "MISSING_CREDENTIALS"
+    | "UPDATE_REQUIRED"
+    | "DEVICE_VERIFICATION_REQUIRED"
+    | "CODE_EXPIRED"
+    | "CODE_MISMATCH"
+    | "TOO_MANY_ATTEMPTS"
+    | "INVALID_CODE"
+    | "TOO_SOON"
+    | "TOO_MANY_REQUESTS"
+    | "LOGIN_AGAIN";
   attempts_left?: number;
+  /** DEVICE_VERIFICATION_REQUIRED: false si ya había un código reciente (sigue valiendo) */
+  code_sent?: boolean;
   /** PIN_LOCKED: segundos hasta poder reintentar */
   retry_after_seconds?: number;
   status_reason?: string | null;
@@ -113,16 +124,27 @@ function pinLoginErrorMessage(result: PinLoginResult): string {
       return "Cuenta pendiente de verificación";
     case "MISSING_CREDENTIALS":
       return "Error interno: Credenciales inválidas";
+    case "UPDATE_REQUIRED":
+      return "Actualiza la app a la última versión para iniciar sesión.";
+    case "CODE_EXPIRED":
+      return "El código expiró o ya fue usado. Pide uno nuevo.";
+    case "CODE_MISMATCH":
+      return "El código no corresponde a este dispositivo. Pide uno nuevo.";
+    case "TOO_MANY_ATTEMPTS":
+      return "Demasiados intentos fallidos. Pide un código nuevo.";
+    case "INVALID_CODE":
+      return `Código incorrecto. Te quedan ${result.attempts_left ?? 0} intento${result.attempts_left === 1 ? "" : "s"}.`;
+    case "TOO_SOON":
+      return "Espera un minuto antes de pedir otro código.";
+    case "TOO_MANY_REQUESTS":
+      return "Pediste demasiados códigos. Intenta de nuevo más tarde.";
+    case "LOGIN_AGAIN":
+      return "Vuelve a iniciar sesión para recibir un código nuevo.";
     default:
       return "Error desconocido";
   }
 }
 
-// Cuenta de prueba de Play Store — siempre bypassa verificación de dispositivo
-const TEST_ACCOUNT_EMAIL = 'oscarmijaelpg@gmail.com';
-/**
- * Login con email + PIN
- */
 /**
  * Obtiene o crea un ID único de dispositivo almacenado localmente.
  */
@@ -142,90 +164,68 @@ export async function getLocalDeviceId(): Promise<string> {
 }
 
 /**
- * Indica si el dispositivo actual es conocido para el usuario.
- * La cuenta de prueba de Play Store siempre retorna true (bypass).
+ * Secreto del dispositivo: se genera una vez y nunca sale del teléfono salvo
+ * hacia el servidor, que guarda solo su hash. Prueba que el dispositivo es el
+ * que se verificó con el código por email.
  */
-export async function isDeviceKnown(userId: string, email: string): Promise<boolean> {
-  if (email.toLowerCase().trim() === TEST_ACCOUNT_EMAIL) {
-    return true;
+async function getLocalDeviceSecret(): Promise<string> {
+  const DEVICE_SECRET_KEY = "MAGNATE_DEVICE_SECRET";
+  let secret = await SecureStore.getItemAsync(DEVICE_SECRET_KEY);
+  if (!secret) {
+    secret = (Crypto.randomUUID() + Crypto.randomUUID()).replace(/-/g, "");
+    await SecureStore.setItemAsync(DEVICE_SECRET_KEY, secret);
   }
+  return secret;
+}
 
-  const deviceId = await getLocalDeviceId();
+export interface DeviceDescriptor {
+  id: string;
+  secret: string;
+  name: string | null;
+  model: string | null;
+  platform: string;
+  os_version: string | null;
+  app_version: string | null;
+}
 
+/** Datos del dispositivo que se envían al servidor (login, verificación, transferencias) */
+export async function getDeviceDescriptor(): Promise<DeviceDescriptor> {
+  return {
+    id: await getLocalDeviceId(),
+    secret: await getLocalDeviceSecret(),
+    name: Device.deviceName ?? null,
+    model: Device.modelName ?? null,
+    platform: Platform.OS,
+    os_version: Device.osVersion ?? null,
+    app_version: Constants.expoConfig?.version ?? null,
+  };
+}
+
+/** ¿El dispositivo actual sigue siendo de confianza para la sesión actual? */
+export async function checkDeviceTrust(): Promise<boolean> {
   try {
-    const { data, error } = await supabase
-      .from("user_devices")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("device_id", deviceId)
-      .eq("status", "active")
-      .limit(1);
-
-    if (error || !data || data.length === 0) {
-      if (error) console.error("isDeviceKnown error:", error);
-      return false; // Not found or error
+    const { data, error } = await supabase.rpc("check_device_trust", {
+      p_device: await getDeviceDescriptor(),
+    } as any);
+    if (error) {
+      console.error("[AUTH] check_device_trust error:", error);
+      return false;
     }
-    
-    // Update last_active_at implicitly when checked
-    await (supabase.from("user_devices") as any).update({ last_active_at: new Date().toISOString() }).eq("id", (data as any)[0].id);
-
-    return true;
-  } catch (err) {
-    console.error("Error verifying known device:", err);
+    return data === true;
+  } catch (error) {
+    console.error("[AUTH] Error checking device trust:", error);
     return false;
   }
 }
 
-/**
- * Registra el dispositivo actual como confiable tras éxito de OTP.
- */
-export async function registerCurrentDevice(): Promise<AuthResult> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Usuario no autenticado." };
-
-    const deviceId = await getLocalDeviceId();
-    
-    // Check if it exists but revoked
-    const { data: existing } = await supabase
-      .from("user_devices")
-      .select("id")
-      .eq("user_id", user.id)
-      .eq("device_id", deviceId)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      const { error } = await (supabase.from("user_devices") as any).update({ 
-        status: "active", 
-        revoked_at: null,
-        last_active_at: new Date().toISOString() 
-      }).eq("id", (existing as any)[0].id);
-      
-      if (error) throw error;
-      return { success: true };
-    }
-
-    // Insert new
-    const { error: insertError } = await supabase.from("user_devices").insert({
-      user_id: user.id,
-      device_id: deviceId,
-      device_name: Device.deviceName || 'Dispositivo desconocido',
-      device_model: Device.modelName || 'Modelo desconocido',
-      platform: Platform.OS as 'ios' | 'android' | 'web',
-      os_version: Device.osVersion || null,
-      app_version: null, // we can inject APP_VERSION easily if needed but not strictly necessary for backend
-      status: "active",
-      is_primary: false,
-      biometric_enabled: false,
-      last_active_at: new Date().toISOString(),
-    } as any);
-
-    if (insertError) throw insertError;
-    return { success: true };
-  } catch (error: any) {
-    console.error("Error registering device:", error);
-    return { success: false, error: "No se pudo registrar el dispositivo." };
+/** Abre la sesión de Supabase con la credencial que entrega el servidor */
+async function signInWithServerCredential(email: string, autoPasswordEncrypted: string): Promise<AuthResult> {
+  const autoPassword = await decrypt(autoPasswordEncrypted);
+  const { error } = await supabase.auth.signInWithPassword({ email, password: autoPassword });
+  if (error) {
+    return { success: false, error: "Error al iniciar sesión" };
   }
+  return { success: true };
 }
 
 export async function loginWithPin(
@@ -235,12 +235,13 @@ export async function loginWithPin(
   try {
     const normalizedEmail = email.toLowerCase().trim();
 
-    // 1-4. El servidor valida el PIN, cuenta los intentos (3 fallidos = suspensión)
-    //      y el estado de la cuenta. Solo devuelve la credencial si todo es correcto.
-    //      "pending" puede ingresar, pero no operar hasta que un admin apruebe la cuenta.
+    // El servidor valida el PIN, el estado de la cuenta y el dispositivo.
+    // Solo entrega la credencial si el dispositivo es de confianza; si es nuevo,
+    // envía un código por email y NO hay sesión hasta validarlo.
     const { data, error: loginError } = await supabase.rpc("login_with_pin", {
       p_email: normalizedEmail,
       p_pin: pin,
+      p_device: await getDeviceDescriptor(),
     } as any);
 
     if (loginError) {
@@ -248,35 +249,66 @@ export async function loginWithPin(
     }
 
     const result = data as PinLoginResult | null;
+    if (result?.error === "DEVICE_VERIFICATION_REQUIRED") {
+      return { success: true, requireDeviceVerification: true, codeSent: result.code_sent !== false };
+    }
     if (!result?.success || !result.user_id || !result.auto_password_encrypted) {
       return { success: false, error: result ? pinLoginErrorMessage(result) : "Error de conexión" };
     }
 
-    const user = { id: result.user_id, auto_password_encrypted: result.auto_password_encrypted };
+    const signIn = await signInWithServerCredential(normalizedEmail, result.auto_password_encrypted);
+    if (!signIn.success) return signIn;
 
-    // 5. Desencriptar la contraseña
-    const autoPassword = await decrypt(user.auto_password_encrypted);
+    return { success: true, userId: result.user_id, requireDeviceVerification: false };
+  } catch (error: any) {
+    return { success: false, error: error.message || "Error desconocido" };
+  }
+}
 
-    // 6. Hacer login con Supabase Auth (Must login first to bypass Row Level Security restrictions for the device check)
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: normalizedEmail,
-      password: autoPassword,
-    });
+/**
+ * Valida el código del dispositivo nuevo. Recién ahí el servidor entrega la
+ * credencial y el dispositivo queda de confianza.
+ */
+export async function verifyDeviceLogin(email: string, code: string): Promise<AuthResult> {
+  try {
+    const normalizedEmail = email.toLowerCase().trim();
+    const { data, error } = await supabase.rpc("verify_device_login", {
+      p_email: normalizedEmail,
+      p_device: await getDeviceDescriptor(),
+      p_code: code,
+    } as any);
 
-    if (signInError) {
-      return { success: false, error: "Error al iniciar sesión" };
+    if (error) return { success: false, error: "Error de conexión" };
+
+    const result = data as PinLoginResult | null;
+    if (!result?.success || !result.user_id || !result.auto_password_encrypted) {
+      return { success: false, error: result ? pinLoginErrorMessage(result) : "Error de conexión" };
     }
 
-    // 7. Verificar dispositivo (la cuenta de prueba siempre lo bypassa)
-    const deviceKnown = await isDeviceKnown(user.id, normalizedEmail);
+    const signIn = await signInWithServerCredential(normalizedEmail, result.auto_password_encrypted);
+    if (!signIn.success) return signIn;
+    return { success: true, userId: result.user_id };
+  } catch (error: any) {
+    return { success: false, error: error.message || "Error desconocido" };
+  }
+}
 
-    if (!deviceKnown) {
-      // Send OTP implicitly since we are now logged in
-      await sendVerificationOtp();
-      return { success: true, userId: user.id, requireDeviceVerification: true };
-    }
+/** Reenvía el código del dispositivo nuevo (solo si hubo un login reciente con PIN correcto) */
+export async function resendDeviceLoginCode(email: string): Promise<AuthResult & { loginAgain?: boolean }> {
+  try {
+    const { data, error } = await supabase.rpc("resend_device_login_code", {
+      p_email: email.toLowerCase().trim(),
+      p_device: await getDeviceDescriptor(),
+    } as any);
+    if (error) return { success: false, error: "Error de conexión" };
 
-    return { success: true, userId: user.id, requireDeviceVerification: false };
+    const result = data as PinLoginResult | null;
+    if (result?.success) return { success: true };
+    return {
+      success: false,
+      loginAgain: result?.error === "LOGIN_AGAIN",
+      error: result ? pinLoginErrorMessage(result) : "Error de conexión",
+    };
   } catch (error: any) {
     return { success: false, error: error.message || "Error desconocido" };
   }
@@ -416,6 +448,14 @@ export async function registerUser(data: RegisterData): Promise<AuthResult> {
       }
     }
 
+    // 5b. El dispositivo donde se creó la cuenta (email ya verificado con código) queda de confianza
+    if (authData.session) {
+      const { error: trustError } = await supabase.rpc("trust_signup_device", {
+        p_device: await getDeviceDescriptor(),
+      } as any);
+      if (trustError) console.error("[AUTH] trust_signup_device error:", trustError);
+    }
+
     // 6. Estado real con el que quedó la cuenta (pendiente de aprobación o verificada)
     let verificationStatus: VerificationStatus | undefined;
     if (authData.session) {
@@ -537,130 +577,61 @@ async function createDefaultAccount(userId: string): Promise<AuthResult> {
   }
 }
 
+// Mensajes de los RPC de cambio de PIN
+const PIN_CHANGE_ERRORS: Record<string, string> = {
+  INVALID_PIN: "PIN actual incorrecto",
+  PIN_LOCKED: "Demasiados intentos incorrectos. Espera unos minutos antes de volver a intentar.",
+  CORRUPT_CREDENTIALS: "Datos de seguridad corruptos. Contacta a soporte.",
+  TOO_SOON: "Espera un minuto antes de pedir otro código.",
+  TOO_MANY_REQUESTS: "Pediste demasiados códigos. Intenta de nuevo más tarde.",
+  INVALID_NEW_PIN: "El nuevo PIN debe tener 6 dígitos.",
+  SAME_PIN: "El nuevo PIN debe ser distinto al actual.",
+  CODE_EXPIRED: "El código expiró o ya fue usado. Empieza de nuevo.",
+  TOO_MANY_ATTEMPTS: "Demasiados intentos fallidos con el código. Empieza de nuevo.",
+  INVALID_CODE: "Código incorrecto.",
+  UNAUTHORIZED: "Sesión inválida. Vuelve a iniciar sesión.",
+};
+
+export interface PinChangeResult extends AuthResult {
+  /** Código de error del servidor (ej. INVALID_CODE, SAME_PIN) */
+  code?: string;
+}
+
+const pinChangeResult = (data: any): PinChangeResult => {
+  if (data?.success) return { success: true };
+  const code = data?.error as string | undefined;
+  let error = (code && PIN_CHANGE_ERRORS[code]) || "No se pudo completar la operación";
+  if (code === "INVALID_PIN" && typeof data?.attempts_left === "number") {
+    error += `. Intentos restantes: ${data.attempts_left}`;
+  }
+  if (code === "INVALID_CODE" && typeof data?.attempts_left === "number") {
+    error += ` Te quedan ${data.attempts_left} intento${data.attempts_left === 1 ? "" : "s"}.`;
+  }
+  return { success: false, code, error };
+};
+
 /**
- * Verify PIN for sensitive actions using bcrypt.
- * Fetches the stored pin_hash from the DB and compares with bcrypt.
+ * Cambio de PIN, paso 1: el servidor valida el PIN actual y envía un código por email.
  */
-export async function verifyPin(pin: string): Promise<boolean> {
+export async function requestPinChangeCode(currentPin: string): Promise<PinChangeResult> {
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return false;
-
-    const { data, error } = await (supabase.from('users') as any)
-      .select('pin_hash')
-      .eq('id', user.id)
-      .single();
-
-    if (error || !data?.pin_hash) {
-      console.error('[AUTH] Error fetching pin_hash:', error);
-      return false;
-    }
-
-    return await bcrypt.compare(pin, data.pin_hash);
-  } catch (error) {
-    console.error('[AUTH] Error verifying PIN:', error);
-    return false;
+    const { data, error } = await supabase.rpc("request_pin_change_code", { p_current_pin: currentPin } as any);
+    if (error) return { success: false, error: "Error de conexión" };
+    return pinChangeResult(data);
+  } catch (error: any) {
+    return { success: false, error: error.message || "Error desconocido" };
   }
 }
 
 /**
- * Send OTP using Resend instead of Supabase
+ * Cambio de PIN, paso 2: el servidor valida el código y guarda el nuevo PIN.
  */
-export async function sendVerificationOtp(): Promise<AuthResult> {
+export async function confirmPinChange(code: string, newPin: string): Promise<PinChangeResult> {
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user || !user.email)
-      return { success: false, error: "Usuario no autenticado" };
-
-    // 1. Generar código de 6 dígitos
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-    // 2. Guardar temporalmente para verificación (10 minutos exp)
-    tempOtp = {
-      code,
-      email: user.email,
-      expires: Date.now() + 10 * 60 * 1000,
-    };
-
-    // 3. Enviar notificación (se encargará el worker de Supabase)
-    const res = await sendOtpEmail(user.id, code);
-
-    if (!res.success) throw new Error(res.error);
-
-    return { success: true };
+    const { data, error } = await supabase.rpc("confirm_pin_change", { p_code: code, p_new_pin: newPin } as any);
+    if (error) return { success: false, error: "Error de conexión" };
+    return pinChangeResult(data);
   } catch (error: any) {
-    console.error("[AUTH] Error al solicitar OTP:", error);
-    return {
-      success: false,
-      error: error.message || "Error al enviar el código de verificación",
-    };
-  }
-}
-
-/**
- * Verify the manual OTP code
- */
-export async function verifyVerificationOtp(
-  token: string,
-): Promise<AuthResult> {
-  try {
-    if (!tempOtp) {
-      return { success: false, error: "No hay un código pendiente" };
-    }
-
-    if (Date.now() > tempOtp.expires) {
-      tempOtp = null;
-      return { success: false, error: "El código ha expirado" };
-    }
-
-    if (tempOtp.code !== token) {
-      return { success: false, error: "Código incorrecto" };
-    }
-
-    // Código válido, limpiar
-    tempOtp = null;
-    return { success: true };
-  } catch (error: any) {
-    return { success: false, error: "Error al verificar el código" };
-  }
-}
-
-/**
- * Update user PIN after security verification (PIN + OTP)
- */
-export async function updatePin(newPin: string): Promise<AuthResult> {
-  try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return { success: false, error: "Usuario no autenticado" };
-
-    // 1. Hash new PIN
-    const salt = await bcrypt.genSalt(10);
-    const newPinHash = await bcrypt.hash(newPin, salt);
-
-    // 2. Update in DB
-    const { error: updateError } = await (supabase.from("users") as any)
-      .update({ pin_hash: newPinHash })
-      .eq("id", user.id);
-
-    if (updateError) {
-      console.error("[AUTH] Error updating pin_hash in DB:", updateError);
-      return { success: false, error: "Error al actualizar el PIN" };
-    }
-
-    // 3. Update Auth Metadata
-    await supabase.auth.updateUser({
-      data: { pin_hash: newPinHash },
-    });
-
-    return { success: true };
-  } catch (error: any) {
-    console.error("[AUTH] updatePin unexpected error:", error);
     return { success: false, error: error.message || "Error desconocido" };
   }
 }
@@ -702,11 +673,8 @@ export async function revokeDevice(deviceId: string): Promise<AuthResult> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { success: false, error: "Usuario no autenticado." };
 
-    const { error } = await (supabase.from("user_devices") as any).update({
-      status: "revoked",
-      revoked_at: new Date().toISOString(),
-      revoke_reason: "User revoked manually"
-    }).eq("id", deviceId).eq("user_id", user.id);
+    // El servidor quita la confianza del dispositivo (secreto y verificación)
+    const { error } = await supabase.rpc("revoke_device", { p_device_record_id: deviceId } as any);
 
     if (error) throw error;
     return { success: true };
