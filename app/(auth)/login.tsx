@@ -43,7 +43,7 @@ const features = [
 
 export default function LoginScreen() {
     const insets = useSafeAreaInsets();
-    const { login } = useAuth();
+    const { login, sessionEndedReason, clearSessionEndedReason } = useAuth();
     const [email, setEmail] = useState('');
     const [pin, setPin] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -56,6 +56,14 @@ export default function LoginScreen() {
     useEffect(() => {
         loadLastUser();
     }, []);
+
+    // La sesión se cerró por el estado de la cuenta (rechazada / suspendida por un admin)
+    useEffect(() => {
+        if (sessionEndedReason) {
+            setAlert({ visible: true, title: 'Sesión cerrada', message: sessionEndedReason, type: 'destructive' });
+            clearSessionEndedReason();
+        }
+    }, [sessionEndedReason]);
 
     const loadLastUser = async () => {
         const user = await getLastUser();

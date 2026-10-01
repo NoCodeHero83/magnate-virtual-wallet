@@ -32,6 +32,9 @@ export const emptyCompanyFormData: CompanyFormData = {
 export const toISODate = (date: Date) =>
     `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
+/** Fecha de inscripción más antigua aceptada */
+const MIN_INCORPORATION_DATE = new Date(1900, 0, 1);
+
 const formatDisplayDate = (date: Date) =>
     `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}/${date.getFullYear()}`;
 
@@ -42,6 +45,9 @@ export function validateCompanyForm(data: CompanyFormData): string[] {
         : validateCompanyCUIT(data.company_cuit);
     if (!cuitValid) errors.push('CUIT de la empresa inválido (debe empezar con 30, 33 o 34)');
     if (!data.incorporation_date) errors.push('Falta la fecha de inscripción');
+    else if (data.incorporation_date < MIN_INCORPORATION_DATE || data.incorporation_date > new Date()) {
+        errors.push('Fecha de inscripción inválida');
+    }
     if (!data.legal_entity_type) errors.push('Falta el tipo societario');
     if (!validateCompanyName(data.legal_name)) errors.push('Nombre legal inválido');
     if (data.trade_name.trim() && !validateCompanyName(data.trade_name)) errors.push('Nombre de fantasía inválido');
@@ -61,38 +67,56 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [iosDraftDate, setIosDraftDate] = useState<Date>(data.incorporation_date ?? new Date());
     const [alertMessage, setAlertMessage] = useState<string | null>(null);
+    const [typesError, setTypesError] = useState(false);
+    const [checkingCuit, setCheckingCuit] = useState(false);
+
+    const loadEntityTypes = async () => {
+        setLoadingTypes(true);
+        setTypesError(false);
+        const { data: rows, error } = await supabase
+            .from('legal_entity_types')
+            .select('code, name')
+            .eq('is_active', true)
+            .order('sort_order');
+        if (error) {
+            console.error('[REGISTER] Error loading legal entity types:', error);
+            setTypesError(true);
+        } else {
+            setEntityTypes((rows || []).map((r: any) => ({ value: r.code, label: r.name })));
+        }
+        setLoadingTypes(false);
+    };
 
     useEffect(() => {
-        let mounted = true;
-        (async () => {
-            const { data: rows, error } = await supabase
-                .from('legal_entity_types')
-                .select('code, name')
-                .eq('is_active', true)
-                .order('sort_order');
-            if (!mounted) return;
-            if (error) {
-                console.error('[REGISTER] Error loading legal entity types:', error);
-                setAlertMessage('No pudimos cargar los tipos societarios. Revisa tu conexión e intenta de nuevo.');
-            } else {
-                setEntityTypes((rows || []).map((r: any) => ({ value: r.code, label: r.name })));
-            }
-            setLoadingTypes(false);
-        })();
-        return () => {
-            mounted = false;
-        };
+        loadEntityTypes();
     }, []);
 
     const cuitDigits = data.company_cuit.replace(/\D/g, '').length;
 
-    const handleContinue = () => {
+    const handleContinue = async () => {
         const errors = validateCompanyForm(data);
-        if (errors.length === 0) {
-            onContinue();
-        } else {
+        if (errors.length > 0) {
             setAlertMessage(`Revisa los siguientes puntos:\n• ${errors.join('\n• ')}`);
+            return;
         }
+
+        // Detectar ahora (y no al final del registro) un CUIT de empresa ya registrado
+        setCheckingCuit(true);
+        const { data: available, error } = await supabase.rpc('is_company_cuit_available', {
+            p_cuit: data.company_cuit,
+        } as any);
+        setCheckingCuit(false);
+
+        if (error) {
+            console.error('[REGISTER] Error checking company CUIT:', error);
+            setAlertMessage('No pudimos verificar el CUIT de la empresa. Revisa tu conexión e intenta de nuevo.');
+            return;
+        }
+        if (available === false) {
+            setAlertMessage('Ya existe una cuenta registrada con el CUIT de esa empresa.');
+            return;
+        }
+        onContinue();
     };
 
     const handleAndroidDate = (event: any, selected?: Date) => {
@@ -144,14 +168,23 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
                     </TouchableOpacity>
                 </View>
 
-                <Select
-                    label="Tipo societario"
-                    placeholder="Seleccionar tipo"
-                    value={data.legal_entity_type}
-                    options={entityTypes}
-                    loading={loadingTypes}
-                    onChange={(value) => onChange('legal_entity_type', value)}
-                />
+                <View>
+                    <Select
+                        label="Tipo societario"
+                        placeholder="Seleccionar tipo"
+                        value={data.legal_entity_type}
+                        options={entityTypes}
+                        loading={loadingTypes}
+                        error={typesError ? 'No pudimos cargar los tipos societarios.' : undefined}
+                        onChange={(value) => onChange('legal_entity_type', value)}
+                    />
+                    {typesError && (
+                        <TouchableOpacity onPress={loadEntityTypes} style={styles.retry}>
+                            <Ionicons name="refresh" size={14} color={colors.accent} />
+                            <Text style={styles.retryText}>Reintentar</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
 
                 <FormInput
                     label="Nombre legal (razón social)"
@@ -169,7 +202,7 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
                     onChangeText={(text) => onChange('trade_name', text)}
                 />
 
-                <Button onPress={handleContinue} style={styles.button}>
+                <Button onPress={handleContinue} loading={checkingCuit} disabled={checkingCuit} style={styles.button}>
                     Siguiente
                     <Ionicons name="arrow-forward" size={20} color={colors.accentForeground} style={{ marginLeft: 8 }} />
                 </Button>
@@ -182,6 +215,7 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
                     mode="date"
                     display="default"
                     maximumDate={new Date()}
+                    minimumDate={MIN_INCORPORATION_DATE}
                     onChange={handleAndroidDate}
                 />
             )}
@@ -210,6 +244,7 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
                                 mode="date"
                                 display="spinner"
                                 maximumDate={new Date()}
+                                minimumDate={MIN_INCORPORATION_DATE}
                                 themeVariant="dark"
                                 onChange={(_e: any, selected?: Date) => selected && setIosDraftDate(selected)}
                             />
@@ -260,6 +295,18 @@ const styles = StyleSheet.create({
     },
     form: {
         gap: spacing.md,
+    },
+    retry: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        marginTop: spacing.xs,
+        alignSelf: 'flex-start',
+    },
+    retryText: {
+        fontSize: 12,
+        fontWeight: '600',
+        color: colors.accent,
     },
     helper: {
         fontSize: 12,

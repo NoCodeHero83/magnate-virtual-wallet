@@ -121,9 +121,18 @@ const SIGNUP_OTP_ERRORS: Record<string, string> = {
   INVALID_CODE: "Código incorrecto.",
 };
 
+export type SignupOtpErrorCode = keyof typeof SIGNUP_OTP_ERRORS;
+
+export interface SignupOtpResponse extends NotificationResponse {
+  /** Código de error del servidor (ej. EMAIL_IN_USE, TOO_SOON) */
+  code?: SignupOtpErrorCode;
+}
+
+const otpErrorCode = (raw?: string | null): SignupOtpErrorCode | undefined =>
+  raw ? (Object.keys(SIGNUP_OTP_ERRORS) as SignupOtpErrorCode[]).find((k) => raw.includes(k)) : undefined;
+
 const otpErrorMessage = (raw?: string | null, fallback = "No se pudo procesar la solicitud.") => {
-  if (!raw) return fallback;
-  const code = Object.keys(SIGNUP_OTP_ERRORS).find((k) => raw.includes(k));
+  const code = otpErrorCode(raw);
   return code ? SIGNUP_OTP_ERRORS[code] : fallback;
 };
 
@@ -134,7 +143,7 @@ const otpErrorMessage = (raw?: string | null, fallback = "No se pudo procesar la
 export async function requestSignupEmailCode(
   email: string,
   firstName: string,
-): Promise<NotificationResponse> {
+): Promise<SignupOtpResponse> {
   try {
     const { error } = await supabase.rpc("request_signup_email_otp", {
       p_email: email,
@@ -143,7 +152,11 @@ export async function requestSignupEmailCode(
 
     if (error) {
       console.error("[NOTIFICATION] Error al pedir código de registro:", error);
-      return { success: false, error: otpErrorMessage(error.message, "No se pudo enviar el código por correo. Puedes reintentar.") };
+      return {
+        success: false,
+        code: otpErrorCode(error.message),
+        error: otpErrorMessage(error.message, "No se pudo enviar el código por correo. Puedes reintentar."),
+      };
     }
     return { success: true };
   } catch (error: any) {
@@ -158,7 +171,7 @@ export async function requestSignupEmailCode(
 export async function verifySignupEmailCode(
   email: string,
   code: string,
-): Promise<NotificationResponse> {
+): Promise<SignupOtpResponse> {
   try {
     const { data, error } = await supabase.rpc("verify_signup_email_otp", {
       p_email: email,
@@ -177,7 +190,7 @@ export async function verifySignupEmailCode(
     if (result?.error === "INVALID_CODE" && typeof result.attempts_left === "number") {
       message += ` Te quedan ${result.attempts_left} intento${result.attempts_left === 1 ? "" : "s"}.`;
     }
-    return { success: false, error: message };
+    return { success: false, code: otpErrorCode(result?.error), error: message };
   } catch (error: any) {
     console.error("[NOTIFICATION] Error inesperado verificando código:", error);
     return { success: false, error: error.message || "Error al procesar la solicitud" };

@@ -48,7 +48,9 @@
 
     "metro.config.js",
 
-    "App.tsx"
+    "App.tsx",
+
+    "supabase/functions"
 
   ]
 

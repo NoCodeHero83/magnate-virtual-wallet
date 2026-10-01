@@ -320,16 +320,9 @@ export interface ValidateTransferResult {
   net_amount: number;
 }
 
-export interface GetUserLoginDataArgs {
-  email_input: string;
-}
-
-export interface GetUserLoginDataResult {
-  id: string;
-  email: string;
-  pin_hash: string;
-  verification_status: VerificationStatus;
-  auto_password_encrypted: string | null;
+export interface LoginWithPinArgs {
+  p_email: string;
+  p_pin: string;
 }
 
 export interface SearchAccountArgs {
@@ -442,9 +435,9 @@ export interface Database {
         Args: ValidateTransferArgs;
         Returns: ValidateTransferResult;
       };
-      get_user_login_data: {
-        Args: GetUserLoginDataArgs;
-        Returns: GetUserLoginDataResult[];
+      login_with_pin: {
+        Args: LoginWithPinArgs;
+        Returns: Json;
       };
       get_account_info: {
         Args: { p_user_id?: string };

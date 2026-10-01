@@ -22,6 +22,21 @@ interface AuthContextType {
   refreshAccount: () => Promise<void>;
   pendingDeviceVerification: boolean;
   setPendingDeviceVerification: (val: boolean) => void;
+  /** Mensaje a mostrar en el login cuando la sesión se cerró por el estado de la cuenta */
+  sessionEndedReason: string | null;
+  clearSessionEndedReason: () => void;
+}
+
+/** Mensaje para cuentas que no pueden usar la app (null si puede ingresar) */
+function blockedStatusMessage(status?: string | null, reason?: string | null): string | null {
+  if (status === 'rejected') {
+    const detail = reason ? `\nMotivo: ${reason}` : '';
+    return `Tu solicitud de cuenta fue rechazada.${detail}\nSi crees que es un error, contacta a soporte.`;
+  }
+  if (status === 'suspended') {
+    return 'Tu cuenta fue suspendida. Contacta a soporte para más información.';
+  }
+  return null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -32,6 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [pendingDeviceVerification, setPendingDeviceVerification] = useState(false);
+  const [sessionEndedReason, setSessionEndedReason] = useState<string | null>(null);
 
   const isAuthenticated = !!session && !!user && !pendingDeviceVerification;
 
@@ -78,8 +94,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const newStatus = payload.new?.verification_status;
           if (!newStatus || newStatus === prevStatus) return;
 
-          if (newStatus === 'suspended' || newStatus === 'rejected') {
-            logout();
+          const blocked = blockedStatusMessage(newStatus, payload.new?.status_reason);
+          if (blocked) {
+            endSession(blocked);
           } else {
             // Recargar usuario y cuenta (la cuenta se activa al aprobar)
             loadUserData(userId);
@@ -121,136 +138,117 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const loadUserData = async (userId: string) => {
-    try {
-      // Retry logic for fetching user profile (handles race condition with Trigger)
-      let userData: User | null = null;
-      let attempts = 0;
-      const maxAttempts = 5; // Increased attempts
+  /** Cierra la sesión dejando un mensaje para mostrar en el login */
+  const endSession = async (reason: string) => {
+    setSessionEndedReason(reason);
+    await logout();
+  };
 
-      while (attempts < maxAttempts && !userData) {
-        attempts++;
-        try {
-          const { data, error } = await supabase
-            .from('users')
-            .select(USER_SELECT)
-            .eq('id', userId)
-            .single();
+  /** Usuario armado con la metadata de auth cuando el perfil aún no existe en public.users */
+  const buildFallbackUser = (authUser: any): User => {
+    const metadata = authUser.user_metadata || {};
+    return {
+      id: authUser.id,
+      email: authUser.email || '',
+      first_name: metadata.nombres || 'Usuario',
+      last_name: metadata.apellidos || '',
+      phone: metadata.telefono || '',
+      dni: metadata.dni || '',
+      cuit_cuil: metadata.cuit || '',
+      pin_hash: metadata.pin_hash || '',
+      // Sin perfil en la BD no sabemos el estado real: se asume pendiente (no opera)
+      verification_status: 'pending',
+      account_type: metadata.account_type === 'business' ? 'business' : 'personal',
+      status_reason: null,
+      business_profile: null,
+      web_access_enabled: false,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      web_password_hash: null,
+      web_access_enabled_at: null,
+      zapsign_verification_id: null,
+      zapsign_verified_at: null,
+      zapsign_data: null,
+      photo_url: metadata.avatar_url || null,
+    };
+  };
 
-          if (error) {
-            // Only retry on specific errors like "Row not found" (PGRST116)
-            if (error.code === 'PGRST116') {
-              if (attempts < maxAttempts) {
-                await new Promise(resolve => setTimeout(resolve, 1500)); // Wait longer
-                continue;
-              }
-            }
-            throw error;
-          }
-          userData = data as User;
-        } catch (innerError: any) {
-          // Handle network errors or other non-supabase errors if needed
-          if (innerError.code === 'PGRST116') {
-            if (attempts < maxAttempts) {
-              await new Promise(resolve => setTimeout(resolve, 1500));
-              continue;
-            }
-          }
-          throw innerError;
-        }
-      }
-
-      setUser(userData);
-
-      // Save for "Remember Me"
-      if (userData) {
-        const isBusiness = userData.account_type === 'business';
-        saveLastUser({
-          email: userData.email,
-          // Para empresas se guarda el nombre a mostrar completo en firstName
-          firstName: isBusiness ? getDisplayName(userData) : userData.first_name,
-          lastName: isBusiness ? '' : userData.last_name,
-          avatarUrl: userData.photo_url ?? undefined
-        }).catch(() => { });
-      }
-
-      const { data: accountData, error: accountError } = await supabase
-        .from('accounts')
-        .select('*, account_types(*)')
-        .eq('user_id', userId)
-        .eq('is_primary', true)
+  /** Perfil del usuario, con reintentos (el trigger de registro puede tardar) */
+  const fetchUserProfile = async (userId: string): Promise<User | null> => {
+    const maxAttempts = 5;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const { data, error } = await supabase
+        .from('users')
+        .select(USER_SELECT)
+        .eq('id', userId)
         .single();
 
-      if (accountError) throw accountError;
-      setAccount(accountData as AccountWithType);
+      if (!error) return data as User;
+      if (error.code !== 'PGRST116') throw error;
+      if (attempt < maxAttempts) await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+    return null;
+  };
 
-    } catch (error: any) {
-      // If user not found (PGRST116) force logout AFTER retries failed
-      if (error.code === 'PGRST116') {
-        // Fallback: Construct user from session metadata if available
-        const currentSession = await supabase.auth.getSession();
-        const authUser = currentSession.data.session?.user;
+  const loadUserData = async (userId: string) => {
+    // 1. Perfil
+    let userData: User | null = null;
+    try {
+      userData = await fetchUserProfile(userId);
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+      setUser(null);
+      setAccount(null);
+      return;
+    }
 
-        if (authUser && authUser.id === userId) {
-          const metadata = authUser.user_metadata || {};
-          const fallbackUser: User = {
-            id: authUser.id,
-            email: authUser.email || '',
-            first_name: metadata.nombres || 'Usuario',
-            last_name: metadata.apellidos || '',
-            phone: metadata.telefono || '',
-            dni: metadata.dni || '',
-            cuit_cuil: metadata.cuit || '',
-            pin_hash: metadata.pin_hash || '',
-            // Sin perfil en la BD no sabemos el estado real: se asume pendiente (no opera)
-            verification_status: 'pending',
-            account_type: metadata.account_type === 'business' ? 'business' : 'personal',
-            status_reason: null,
-            business_profile: null,
-            web_access_enabled: false,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            // Initialize optional fields to null to satisfy User type
-            web_password_hash: null,
-            web_access_enabled_at: null,
-            zapsign_verification_id: null,
-            zapsign_verified_at: null,
-            zapsign_data: null,
-            photo_url: metadata.avatar_url || null
-          };
-          setUser(fallbackUser);
-
-          // Attempt to fetch account even if user profile failed
-          try {
-            const { data: accountData, error: accountError } = await supabase
-              .from('accounts')
-              .select('*, account_types(*)')
-              .eq('user_id', userId)
-              .eq('is_primary', true)
-              .single();
-
-            if (!accountError && accountData) {
-              setAccount(accountData as AccountWithType);
-            } else {
-              setAccount(null); // Ensure account is null if not found
-            }
-          } catch (accErr) {
-            setAccount(null); // Ensure account is null on error
-          }
-
-        } else {
-          setUser(null);
-          setAccount(null); // Also clear account if user fallback fails
-        }
-      } else {
-        console.error('Error loading user data:', error);
+    if (!userData) {
+      // El perfil no existe (todavía): usar la metadata de la sesión
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const authUser = currentSession?.user;
+      if (!authUser || authUser.id !== userId) {
         setUser(null);
         setAccount(null);
+        return;
       }
+      userData = buildFallbackUser(authUser);
     }
+
+    // 2. Cuentas rechazadas o suspendidas no pueden usar la app aunque tengan sesión guardada
+    const blocked = blockedStatusMessage(userData.verification_status, userData.status_reason);
+    if (blocked) {
+      await endSession(blocked);
+      return;
+    }
+
+    setUser(userData);
+
+    // Save for "Remember Me"
+    const isBusiness = userData.account_type === 'business';
+    saveLastUser({
+      email: userData.email,
+      // Para empresas se guarda el nombre a mostrar completo en firstName
+      firstName: isBusiness ? getDisplayName(userData) : userData.first_name,
+      lastName: isBusiness ? '' : userData.last_name,
+      avatarUrl: userData.photo_url ?? undefined
+    }).catch(() => { });
+
+    // 3. Cuenta principal (si falla, el usuario se mantiene)
+    const { data: accountData, error: accountError } = await supabase
+      .from('accounts')
+      .select('*, account_types(*)')
+      .eq('user_id', userId)
+      .eq('is_primary', true)
+      .maybeSingle();
+
+    if (accountError) {
+      console.error('Error loading account:', accountError);
+    }
+    setAccount((accountData ?? null) as AccountWithType | null);
   };
 
   const login = async (email: string, pin: string) => {
+    setSessionEndedReason(null);
     try {
       const result = await loginService(email, pin);
 
@@ -312,6 +310,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         refreshAccount,
         pendingDeviceVerification,
         setPendingDeviceVerification,
+        sessionEndedReason,
+        clearSessionEndedReason: () => setSessionEndedReason(null),
       }}
     >
       {children}

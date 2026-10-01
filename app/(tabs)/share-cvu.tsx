@@ -19,6 +19,7 @@ import { ScreenHeader } from '../../components/layout';
 import { Button, AlertDialog } from '../../components/ui';
 import { spacing, borderRadius, typography } from '../../theme';
 import { getDisplayName } from '../../utils/user';
+import { AccountStatusBanner } from '../../components/account/AccountStatusGate';
 import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import QRCode from 'react-native-qrcode-svg';
@@ -127,6 +128,9 @@ export default function ShareCvuScreen() {
                 contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
                 showsVerticalScrollIndicator={false}
             >
+                {/* Cuenta pendiente / no habilitada: todavía no puede recibir */}
+                <AccountStatusBanner style={{ marginHorizontal: 0, marginTop: 0 }} />
+
                 {/* QR Section */}
                 <View style={[styles.qrCard]} ref={qrViewRef} collapsable={false}>
                     <View style={styles.qrContainer}>

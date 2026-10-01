@@ -283,7 +283,7 @@ export default function ProfileScreen() {
             dailySpent={limits?.dailySpent}
             perTransactionLimit={limits?.perTransactionLimit}*/}
           {/* Alias Management */}
-          <AliasManagement userCuit={currentUser.cuit.replace(/-/g, "")} />
+          <AliasManagement userCuit={(company?.cuit ?? currentUser.cuit).replace(/-/g, "")} />
 
           {/* Company (Persona Jurídica) */}
           {company && (

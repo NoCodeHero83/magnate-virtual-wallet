@@ -1,46 +1,68 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Button } from '../ui/Button';
 import { colors, spacing, borderRadius } from '../../theme';
 import { useAuth } from '../../context/AuthContext';
-import { canOperate, isBusinessAccount } from '../../utils/user';
+import { getOperationalBlock, isBusinessAccount, OperationalBlock } from '../../utils/user';
 
-const pendingMessage = (isBusiness: boolean) =>
-    isBusiness
+const BLOCK_TITLES: Record<OperationalBlock, string> = {
+    pending_review: 'Tu cuenta está en revisión',
+    account_inactive: 'Tu cuenta no está habilitada',
+};
+
+const blockMessage = (block: OperationalBlock, isBusiness: boolean) => {
+    if (block === 'account_inactive') {
+        return 'Tu cuenta no está habilitada para enviar ni recibir dinero en este momento. Contacta a soporte para más información.';
+    }
+    return isBusiness
         ? 'Estamos revisando los datos de tu empresa. Mientras tanto no puedes enviar ni recibir dinero. Te avisaremos por email cuando la cuenta esté aprobada.'
         : 'Estamos revisando tus datos. Mientras tanto no puedes enviar ni recibir dinero. Te avisaremos por email cuando la cuenta esté aprobada.';
+};
+
+/** Motivo de bloqueo del usuario actual (null si puede operar) */
+const useOperationalBlock = () => {
+    const { user, account } = useAuth();
+    return { block: getOperationalBlock(user, account), isBusiness: isBusinessAccount(user) };
+};
 
 /** Banner para el dashboard cuando la cuenta todavía no puede operar */
-export const AccountStatusBanner: React.FC = () => {
-    const { user } = useAuth();
-    if (!user || canOperate(user)) return null;
+export const AccountStatusBanner: React.FC<{ style?: StyleProp<ViewStyle> }> = ({ style }) => {
+    const { block, isBusiness } = useOperationalBlock();
+    if (!block) return null;
 
     return (
-        <View style={styles.banner}>
-            <Ionicons name="time-outline" size={22} color={colors.warning} />
+        <View style={[styles.banner, style]}>
+            <Ionicons
+                name={block === 'pending_review' ? 'time-outline' : 'alert-circle-outline'}
+                size={22}
+                color={colors.warning}
+            />
             <View style={{ flex: 1 }}>
-                <Text style={styles.bannerTitle}>Tu cuenta está en revisión</Text>
-                <Text style={styles.bannerText}>{pendingMessage(isBusinessAccount(user))}</Text>
+                <Text style={styles.bannerTitle}>{BLOCK_TITLES[block]}</Text>
+                <Text style={styles.bannerText}>{blockMessage(block, isBusiness)}</Text>
             </View>
         </View>
     );
 };
 
 /** Pantalla que reemplaza a las operaciones de dinero mientras la cuenta no está verificada */
-const AccountNotOperational: React.FC = () => {
+const AccountNotOperational: React.FC<{ block: OperationalBlock; isBusiness: boolean }> = ({ block, isBusiness }) => {
     const insets = useSafeAreaInsets();
-    const { user } = useAuth();
 
     return (
         <View style={[styles.screen, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom + 90 }]}>
             <View style={styles.iconCircle}>
-                <Ionicons name="hourglass-outline" size={44} color={colors.warning} />
+                <Ionicons
+                    name={block === 'pending_review' ? 'hourglass-outline' : 'lock-closed-outline'}
+                    size={44}
+                    color={colors.warning}
+                />
             </View>
-            <Text style={styles.title}>Cuenta en revisión</Text>
-            <Text style={styles.text}>{pendingMessage(isBusinessAccount(user))}</Text>
+            <Text style={styles.title}>{BLOCK_TITLES[block]}</Text>
+            <Text style={styles.text}>{blockMessage(block, isBusiness)}</Text>
             <Button onPress={() => router.replace('/(tabs)')} style={styles.button}>
                 Volver al inicio
             </Button>
@@ -55,8 +77,8 @@ const AccountNotOperational: React.FC = () => {
  */
 export function withOperationalAccount<P extends object>(Screen: React.ComponentType<P>) {
     const Gated = (props: P) => {
-        const { user } = useAuth();
-        if (user && !canOperate(user)) return <AccountNotOperational />;
+        const { block, isBusiness } = useOperationalBlock();
+        if (block) return <AccountNotOperational block={block} isBusiness={isBusiness} />;
         return <Screen {...props} />;
     };
     Gated.displayName = `withOperationalAccount(${Screen.displayName || Screen.name || 'Screen'})`;

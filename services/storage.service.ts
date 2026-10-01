@@ -14,7 +14,6 @@ export interface Settings {
 const KEYS = {
   LAST_USER: "magnate_last_user",
   SETTINGS: "magnate_settings",
-  PIN_ATTEMPTS: "magnate_pin_attempts",
 };
 
 export const saveLastUser = async (user: SavedUser): Promise<void> => {
@@ -59,26 +58,4 @@ export const getSettings = async (): Promise<Settings | null> => {
     console.error("Error getting settings:", error);
     return null;
   }
-};
-export const getPinAttempts = async (email: string): Promise<number> => {
-  try {
-    const data = await AsyncStorage.getItem(`${KEYS.PIN_ATTEMPTS}_${email}`);
-    return data ? parseInt(data, 10) : 0;
-  } catch {
-    return 0;
-  }
-};
-
-export const incrementPinAttempts = async (email: string): Promise<number> => {
-  const current = await getPinAttempts(email);
-  const nextAttempts = current + 1;
-  await AsyncStorage.setItem(
-    `${KEYS.PIN_ATTEMPTS}_${email}`,
-    nextAttempts.toString(),
-  );
-  return nextAttempts;
-};
-
-export const resetPinAttempts = async (email: string): Promise<void> => {
-  await AsyncStorage.removeItem(`${KEYS.PIN_ATTEMPTS}_${email}`);
 };

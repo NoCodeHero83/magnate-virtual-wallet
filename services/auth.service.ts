@@ -66,6 +66,8 @@ export interface AuthResult {
   error?: string;
   userId?: string;
   requireDeviceVerification?: boolean;
+  /** Registro: estado con el que quedó la cuenta */
+  verificationStatus?: VerificationStatus;
 }
 // Resultado del RPC login_with_pin (el PIN se valida en el servidor)
 interface PinLoginResult {
@@ -80,6 +82,8 @@ interface PinLoginResult {
     | "NOT_VERIFIED"
     | "MISSING_CREDENTIALS";
   attempts_left?: number;
+  /** PIN_LOCKED: segundos hasta poder reintentar */
+  retry_after_seconds?: number;
   status_reason?: string | null;
   user_id?: string;
   verification_status?: VerificationStatus;
@@ -97,8 +101,10 @@ function pinLoginErrorMessage(result: PinLoginResult): string {
       return "Datos de seguridad corruptos";
     case "INVALID_PIN":
       return `PIN incorrecto. Intentos restantes: ${result.attempts_left ?? 0}`;
-    case "PIN_LOCKED":
-      return "Has excedido el número de intentos. Cuenta suspendida.";
+    case "PIN_LOCKED": {
+      const minutes = Math.max(1, Math.ceil((result.retry_after_seconds ?? 900) / 60));
+      return `Demasiados intentos incorrectos. Por seguridad, espera ${minutes} minuto${minutes === 1 ? "" : "s"} antes de volver a intentar.`;
+    }
     case "REJECTED": {
       const reason = result.status_reason ? `\nMotivo: ${result.status_reason}` : "";
       return `Tu solicitud de cuenta fue rechazada.${reason}\nSi crees que es un error, contacta a soporte.`;
@@ -410,9 +416,27 @@ export async function registerUser(data: RegisterData): Promise<AuthResult> {
       }
     }
 
+    // 6. Estado real con el que quedó la cuenta (pendiente de aprobación o verificada)
+    let verificationStatus: VerificationStatus | undefined;
+    if (authData.session) {
+      const { data: profile } = await supabase
+        .from("users")
+        .select("verification_status")
+        .eq("id", userId)
+        .maybeSingle();
+      verificationStatus = (profile as any)?.verification_status;
+    }
+    if (!verificationStatus) {
+      const { data: needsApproval } = await supabase.rpc("signup_requires_approval", {
+        p_account_type: accountType,
+      } as any);
+      verificationStatus = needsApproval === true ? "pending" : "verified";
+    }
+
     return {
       success: true,
       userId,
+      verificationStatus,
     };
   } catch (error: any) {
     return { success: false, error: error.message || "Error desconocido" };

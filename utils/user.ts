@@ -28,7 +28,25 @@ export function isBusinessAccount(user: Pick<User, 'account_type'> | null | unde
   return user?.account_type === 'business';
 }
 
-/** La cuenta puede enviar / recibir dinero solo cuando está verificada */
-export function canOperate(user: Pick<User, 'verification_status'> | null | undefined): boolean {
-  return user?.verification_status === 'verified';
+export type OperationalBlock = 'pending_review' | 'account_inactive';
+
+/**
+ * Motivo por el que el usuario no puede enviar / recibir dinero (null si puede).
+ * Requiere usuario verificado y cuenta bancaria activa (la BD aplica la misma regla).
+ */
+export function getOperationalBlock(
+  user: Pick<User, 'verification_status'> | null | undefined,
+  account?: { status?: string | null } | null,
+): OperationalBlock | null {
+  if (!user) return null;
+  if (user.verification_status !== 'verified') return 'pending_review';
+  if (account && account.status !== 'active') return 'account_inactive';
+  return null;
+}
+
+export function canOperate(
+  user: Pick<User, 'verification_status'> | null | undefined,
+  account?: { status?: string | null } | null,
+): boolean {
+  return getOperationalBlock(user, account) === null;
 }

@@ -1,12 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { Button } from '../ui/Button';
-import { colors, spacing, borderRadius, typography } from '../../theme';
+import { colors, spacing, borderRadius } from '../../theme';
 import { registerUser, CompanyRegisterData } from '../../services/auth.service';
-import { supabase } from '../../lib/supabase';
 import type { UserAccountType } from '../../types/database.types';
 
 interface StepConfirmationProps {
@@ -23,9 +22,11 @@ interface StepConfirmationProps {
     pin: string;
     accountType: UserAccountType;
     company?: CompanyRegisterData;
+    /** Volver a los datos sin perder lo cargado (incluida la firma de ZapSign) */
+    onRetry: () => void;
 }
 
-export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, accountType, company }) => {
+export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, accountType, company, onRetry }) => {
     const insets = useSafeAreaInsets();
     const [status, setStatus] = useState<'processing' | 'success' | 'error'>('processing');
     const [errorMsg, setErrorMsg] = useState('');
@@ -42,13 +43,9 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, a
                 });
 
                 if (result.success) {
-                    // Avisar si la cuenta queda en revisión (según la configuración del admin)
-                    const { data: needsApproval } = await supabase.rpc('signup_requires_approval', {
-                        p_account_type: accountType,
-                    } as any);
-                    setRequiresApproval(needsApproval === true);
+                    // Estado real con el que quedó la cuenta
+                    setRequiresApproval(result.verificationStatus === 'pending');
                     setStatus('success');
-                    // En este punto no realizamos auto-login: forzamos verificación de email en todos los entornos
                 } else {
                     setStatus('error');
                     setErrorMsg(result.error || 'Error al procesar el registro');
@@ -82,12 +79,8 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, a
                 </View>
                 <Text style={styles.title}>Hubo un problema</Text>
                 <Text style={styles.subtitle}>{errorMsg}</Text>
-                <Button
-                    variant="outline"
-                    onPress={() => router.replace('/(auth)/register')}
-                    style={styles.button}
-                >
-                    Volver a intentar
+                <Button variant="outline" onPress={onRetry} style={styles.button}>
+                    Revisar mis datos
                 </Button>
             </View>
         );
@@ -99,7 +92,11 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, a
             <View style={styles.iconStack}>
                 <View style={styles.pulseBg}>
                     <View style={styles.iconCircle}>
-                        <Ionicons name="mail" size={44} color={colors.accent} />
+                        <Ionicons
+                            name={accountType === 'business' ? 'business' : 'person'}
+                            size={44}
+                            color={colors.accent}
+                        />
                     </View>
                 </View>
                 <View style={styles.successBadge}>
@@ -107,24 +104,11 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, a
                 </View>
             </View>
 
-            <Text style={styles.title}>¡Casi listo!</Text>
-            <Text style={styles.subtitle}>Enviamos un enlace de verificación a tu correo:</Text>
+            <Text style={styles.title}>¡Cuenta creada!</Text>
+            <Text style={styles.subtitle}>Ya puedes iniciar sesión con tu email y tu PIN:</Text>
 
             <View style={styles.emailContainer}>
                 <Text style={styles.emailText}>{data.email || 'tu@email.com'}</Text>
-            </View>
-
-            <View style={styles.nextStepBox}>
-                <View style={styles.nextStepHeader}>
-                    <View style={styles.infoBadge}>
-                        <Text style={styles.infoText}>!</Text>
-                    </View>
-                    <Text style={styles.nextStepTitle}>Próximo paso</Text>
-                </View>
-                <Text style={styles.nextStepDesc}>
-                    Por favor, confirma tu email para activar todas las funciones de tu billetera Magnate.
-                    Revisa tu bandeja de entrada y haz clic en el enlace de verificación.
-                </Text>
             </View>
 
             {requiresApproval && (
@@ -145,25 +129,6 @@ export const StepConfirmation: React.FC<StepConfirmationProps> = ({ data, pin, a
                 Ir al Login
                 <Ionicons name="arrow-forward" size={20} color={colors.accentForeground} style={{ marginLeft: 8 }} />
             </Button>
-
-            <View style={styles.footer}>
-                <Text style={styles.footerText}>¿No recibiste el correo? </Text>
-                <TouchableOpacity
-                    onPress={async () => {
-                        try {
-                            const res = await supabase.auth.resend({
-                                type: 'signup',
-                                email: data.email
-                            } as any);
-                            Alert.alert('Verificación', 'Correo de verificación reenviado.');
-                        } catch (e: any) {
-                            Alert.alert('Error', 'No se pudo reenviar el correo de verificación.');
-                        }
-                    }}
-                >
-                    <Text style={styles.resendLink}>reenviar verificación</Text>
-                </TouchableOpacity>
-            </View>
         </View>
     );
 };
@@ -246,44 +211,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         fontSize: 14,
     },
-    nextStepBox: {
-        backgroundColor: colors.card,
-        padding: spacing.lg,
-        borderRadius: borderRadius.xl,
-        borderWidth: 1,
-        borderColor: colors.border,
-        width: '100%',
-        marginBottom: spacing.xl,
-    },
-    nextStepHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: spacing.sm,
-        marginBottom: spacing.sm,
-    },
-    infoBadge: {
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        backgroundColor: colors.accent,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    infoText: {
-        color: colors.accentForeground,
-        fontWeight: 'bold',
-        fontSize: 12,
-    },
-    nextStepTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: colors.foreground,
-    },
-    nextStepDesc: {
-        fontSize: 13,
-        color: colors.mutedForeground,
-        lineHeight: 20,
-    },
     button: {
         width: '100%',
         height: 56,
@@ -297,7 +224,7 @@ const styles = StyleSheet.create({
         borderRadius: borderRadius.xl,
         padding: spacing.md,
         width: '100%',
-        marginTop: -spacing.md,
+        marginTop: 0,
         marginBottom: spacing.xl,
     },
     reviewText: {
@@ -306,18 +233,4 @@ const styles = StyleSheet.create({
         lineHeight: 19,
         color: colors.foreground,
     },
-    footer: {
-        flexDirection: 'row',
-        marginTop: spacing.xl,
-        alignItems: 'center',
-    },
-    footerText: {
-        fontSize: 12,
-        color: colors.mutedForeground,
-    },
-    resendLink: {
-        fontSize: 12,
-        color: colors.accent,
-        fontWeight: '600',
-    }
 });

@@ -12,7 +12,7 @@ import {
     emptyCompanyFormData,
     toISODate,
 } from '../../components/register/StepCompanyData';
-import { StepEmailVerification } from '../../components/register/StepEmailVerification';
+import { StepEmailVerification, CodeRequestInfo } from '../../components/register/StepEmailVerification';
 import { StepPinCreation } from '../../components/register/StepPinCreation';
 import { StepConfirmation } from '../../components/register/StepConfirmation';
 import { colors } from '../../theme';
@@ -65,8 +65,16 @@ export default function RegisterScreen() {
     });
     const [companyData, setCompanyData] = useState<CompanyFormData>(emptyCompanyFormData);
     const [pin, setPin] = useState('');
+    // Email ya verificado con código: si no cambia, no se vuelve a pedir el paso
+    const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
+    // Último código pedido (para no pedir otro al ir y volver entre pasos)
+    const [lastCodeRequest, setLastCodeRequest] = useState<CodeRequestInfo | null>(null);
 
-    const steps = STEP_SEQUENCES[accountType ?? 'personal'];
+    const normalizedEmail = formData.email.trim().toLowerCase();
+    const emailAlreadyVerified = !!verifiedEmail && verifiedEmail === normalizedEmail;
+    const steps = STEP_SEQUENCES[accountType ?? 'personal'].filter(
+        (id) => id !== 'email' || !emailAlreadyVerified || step === 'email'
+    );
     const stepIndex = steps.indexOf(step);
     const isBusiness = accountType === 'business';
 
@@ -94,6 +102,14 @@ export default function RegisterScreen() {
     const handleContinueFromForm = () => {
         if (isFormValid) goNext();
     };
+
+    const handleEmailVerified = () => {
+        setVerifiedEmail(normalizedEmail);
+        goTo('pin');
+    };
+
+    // Tras un error al crear la cuenta: volver a los datos sin perder nada
+    const handleRetry = () => goTo(isBusiness ? 'company' : 'form');
 
     const handlePinComplete = (createdPin: string) => {
         setPin(createdPin);
@@ -173,7 +189,12 @@ export default function RegisterScreen() {
                     {step === 'email' && (
                         <StepEmailVerification
                             email={formData.email}
-                            onVerified={goNext}
+                            firstName={formData.nombres}
+                            lastRequest={lastCodeRequest}
+                            onCodeRequested={setLastCodeRequest}
+                            onVerified={handleEmailVerified}
+                            onChangeEmail={() => goTo('form')}
+                            onGoToLogin={() => router.replace('/(auth)/login')}
                         />
                     )}
 
@@ -191,6 +212,7 @@ export default function RegisterScreen() {
                             pin={pin}
                             accountType={accountType ?? 'personal'}
                             company={company}
+                            onRetry={handleRetry}
                         />
                     )}
                 </View>
