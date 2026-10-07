@@ -68,7 +68,12 @@ function ConfirmScreen() {
     };
   }, [account?.id, identifier, amount]);
 
-  const hasFee = !!quote && quote.fee > 0;
+  const hasFee = !!quote && quote.fee > 0 && !quote.blockingError;
+  // No se puede confirmar: destino inválido, monto menor a la comisión o saldo insuficiente
+  const quoteProblem = quote?.blockingError
+    ?? (quote?.insufficientBalance
+      ? `Saldo insuficiente: necesitas ${formatCurrency(quote.totalDebit)}${quote.fee > 0 ? " (monto más comisión)" : ""}.`
+      : null);
   const [alertConfig, setAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -209,6 +214,13 @@ function ConfirmScreen() {
           )}
         </View>
 
+        {quoteProblem && (
+          <View style={styles.errorBox}>
+            <Ionicons name="alert-circle-outline" size={18} color={colors.destructive} />
+            <Text style={styles.errorText}>{quoteProblem}</Text>
+          </View>
+        )}
+
         {/* Warning */}
         <View style={styles.warningBox}>
           <Text style={styles.warningText}>
@@ -224,7 +236,7 @@ function ConfirmScreen() {
             style={styles.confirmButton}
             textStyle={{ fontSize: 16 }}
             loading={isLoading}
-            disabled={quoteLoading}
+            disabled={quoteLoading || !!quoteProblem}
           >
             {!isLoading && (
               <>
@@ -365,6 +377,20 @@ const styles = StyleSheet.create({
   totalValue: {
     fontSize: 16,
     fontWeight: "700",
+  },
+  errorBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: "rgba(239, 68, 68, 0.08)",
+    padding: spacing.md,
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing.md,
+  },
+  errorText: {
+    flex: 1,
+    color: colors.destructive,
+    fontSize: 13,
   },
   warningBox: {
     backgroundColor: "rgba(47, 128, 237, 0.1)", // accent 10

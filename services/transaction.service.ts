@@ -1,5 +1,6 @@
 import { supabase } from "../lib/supabase";
 import { getDeviceDescriptor } from "./auth.service";
+import { formatCurrency } from "../utils/formatters";
 import {
   Transaction,
   TransactionWithType,
@@ -15,7 +16,20 @@ export interface TransferQuote {
   totalDebit: number;
   /** Lo que sale hacia el destino */
   amountSent: number;
+  /** El saldo no alcanza para el total (aviso previo; la transferencia lo valida igual) */
+  insufficientBalance: boolean;
+  /** Motivo por el que la transferencia no puede hacerse (null si puede) */
+  blockingError: string | null;
 }
+
+/** Mensajes de quote_transfer que impiden confirmar */
+const QUOTE_ERRORS: Record<string, string> = {
+  DESTINATION_NOT_FOUND: "No encontramos una cuenta con ese alias, CVU o CBU.",
+  DESTINATION_NOT_ACTIVE: "La cuenta destino no está habilitada para recibir transferencias.",
+  SAME_ACCOUNT: "No puedes transferir a tu propia cuenta.",
+  ACCOUNT_NOT_ACTIVE: "Tu cuenta no está habilitada para operar en este momento.",
+  INVALID_AMOUNT: "El monto no es válido.",
+};
 
 export const transactionService = {
   /**
@@ -33,15 +47,32 @@ export const transactionService = {
       p_amount: amount,
     } as any);
     const result = data as any;
-    if (error || !result?.success) {
+    if (error || !result) {
       if (error) console.error("Error quoting transfer:", error);
-      return null;
+      return null; // sin conexión: la transferencia se valida al confirmar
+    }
+    if (!result.success) {
+      if (result.error === "AMOUNT_TOO_LOW_FOR_FEE") {
+        return {
+          fee: Number(result.fee) || 0,
+          chargeMode: "deduct",
+          totalDebit: amount,
+          amountSent: 0,
+          insufficientBalance: false,
+          blockingError: `El monto no alcanza para cubrir la comisión (${formatCurrency(Number(result.fee) || 0)}).`,
+        };
+      }
+      const message = QUOTE_ERRORS[result.error];
+      if (!message) return null;
+      return { fee: 0, chargeMode: "deduct", totalDebit: amount, amountSent: amount, insufficientBalance: false, blockingError: message };
     }
     return {
       fee: Number(result.fee) || 0,
       chargeMode: result.charge_mode,
       totalDebit: Number(result.total_debit) || amount,
       amountSent: Number(result.amount_sent) || amount,
+      insufficientBalance: result.insufficient_balance === true,
+      blockingError: null,
     };
   },
 
@@ -175,6 +206,9 @@ export const transactionService = {
       // Mensajes legibles para los errores de cuentas no habilitadas (pendientes de aprobación, bloqueadas)
       if (error.message?.includes("DEVICE_NOT_TRUSTED")) {
         throw new Error("Este dispositivo no está verificado. Cierra sesión y vuelve a ingresar para verificarlo.");
+      }
+      if (error.message?.includes("DESTINATION_NOT_FOUND")) {
+        throw new Error("No encontramos una cuenta con ese alias, CVU o CBU.");
       }
       if (error.message?.includes("DESTINATION_NOT_ACTIVE")) {
         throw new Error("La cuenta destino no está habilitada para recibir transferencias.");
