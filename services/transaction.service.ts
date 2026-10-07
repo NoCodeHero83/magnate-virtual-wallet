@@ -7,7 +7,44 @@ import {
   SearchAccountResult,
 } from "../types/database.types";
 
+/** Lo que cuesta una transferencia antes de confirmarla (lo calcula el servidor) */
+export interface TransferQuote {
+  fee: number;
+  chargeMode: "deduct" | "on_top";
+  /** Lo que se debita de la cuenta */
+  totalDebit: number;
+  /** Lo que sale hacia el destino */
+  amountSent: number;
+}
+
 export const transactionService = {
+  /**
+   * Comisión de una transferencia antes de confirmarla.
+   * Devuelve null si no se pudo calcular (la transferencia igual la valida el servidor).
+   */
+  async quoteTransfer(
+    fromAccountId: string,
+    toIdentifier: string,
+    amount: number,
+  ): Promise<TransferQuote | null> {
+    const { data, error } = await supabase.rpc("quote_transfer", {
+      p_from_account_id: fromAccountId,
+      p_to_identifier: toIdentifier.trim(),
+      p_amount: amount,
+    } as any);
+    const result = data as any;
+    if (error || !result?.success) {
+      if (error) console.error("Error quoting transfer:", error);
+      return null;
+    }
+    return {
+      fee: Number(result.fee) || 0,
+      chargeMode: result.charge_mode,
+      totalDebit: Number(result.total_debit) || amount,
+      amountSent: Number(result.amount_sent) || amount,
+    };
+  },
+
   /**
    * Get recent transactions for dashboard
    */
@@ -141,6 +178,12 @@ export const transactionService = {
       }
       if (error.message?.includes("DESTINATION_NOT_ACTIVE")) {
         throw new Error("La cuenta destino no está habilitada para recibir transferencias.");
+      }
+      if (error.message?.includes("AMOUNT_TOO_LOW_FOR_FEE")) {
+        throw new Error("El monto no alcanza para cubrir la comisión de la transferencia.");
+      }
+      if (error.message?.includes("INSUFFICIENT_BALANCE")) {
+        throw new Error("Saldo insuficiente para cubrir el monto y la comisión.");
       }
       if (error.message?.includes("ACCOUNT_NOT_ACTIVE")) {
         throw new Error("Tu cuenta no está habilitada para operar en este momento. Contacta a soporte si el problema persiste.");

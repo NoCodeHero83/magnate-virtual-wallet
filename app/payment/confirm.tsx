@@ -21,7 +21,7 @@ import {
 import { formatCurrency, getInitials } from "../../utils/formatters";
 import { Button, AlertDialog } from "../../components/ui";
 import { useAuth } from "../../context/AuthContext";
-import { transactionService } from "../../services/transaction.service";
+import { transactionService, TransferQuote } from "../../services/transaction.service";
 import { parseAmount } from "../../utils/formatters";
 import { withOperationalAccount } from '../../components/account/AccountStatusGate';
 
@@ -45,6 +45,30 @@ function ConfirmScreen() {
     typeof params.identifier === "string" ? params.identifier : "";
 
   const [isLoading, setIsLoading] = useState(false);
+  // Comisión calculada por el servidor (null mientras carga o si no se pudo calcular)
+  const [quote, setQuote] = useState<TransferQuote | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(true);
+
+  useEffect(() => {
+    if (!account?.id || !identifier) {
+      setQuoteLoading(false);
+      return;
+    }
+    let cancelled = false;
+    transactionService
+      .quoteTransfer(account.id, identifier, parseAmount(amount))
+      .then((result) => {
+        if (!cancelled) setQuote(result);
+      })
+      .finally(() => {
+        if (!cancelled) setQuoteLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account?.id, identifier, amount]);
+
+  const hasFee = !!quote && quote.fee > 0;
   const [alertConfig, setAlertConfig] = useState<{
     visible: boolean;
     title: string;
@@ -86,6 +110,9 @@ function ConfirmScreen() {
           amount,
           recipientName: recipient,
           reference_number: result?.reference_number,
+          commission: String(result?.commission ?? 0),
+          totalDebit: String(result?.total_debit ?? ""),
+          amountSent: String(result?.amount_sent ?? ""),
         },
       });
     } catch (error: any) {
@@ -152,6 +179,34 @@ function ConfirmScreen() {
               </Text>
             </View>
           ) : null}
+
+          <View style={[styles.divider, { marginTop: spacing.md }]} />
+
+          {quoteLoading ? (
+            <ActivityIndicator size="small" color={colors.mutedForeground} />
+          ) : hasFee ? (
+            <>
+              <View style={styles.cardRow}>
+                <Text style={styles.rowLabel}>Comisión</Text>
+                <Text style={styles.rowValue}>{formatCurrency(quote!.fee)}</Text>
+              </View>
+              {quote!.chargeMode === "deduct" && (
+                <View style={[styles.cardRow, { marginTop: spacing.md }]}>
+                  <Text style={styles.rowLabel}>Recibe el destinatario</Text>
+                  <Text style={styles.rowValue}>{formatCurrency(quote!.amountSent)}</Text>
+                </View>
+              )}
+              <View style={[styles.cardRow, { marginTop: spacing.md }]}>
+                <Text style={[styles.rowLabel, styles.totalLabel]}>Total a debitar</Text>
+                <Text style={[styles.rowValue, styles.totalValue]}>{formatCurrency(quote!.totalDebit)}</Text>
+              </View>
+            </>
+          ) : (
+            <View style={styles.cardRow}>
+              <Text style={styles.rowLabel}>Comisión</Text>
+              <Text style={styles.rowValue}>{quote ? "Sin comisión" : "Se calcula al confirmar"}</Text>
+            </View>
+          )}
         </View>
 
         {/* Warning */}
@@ -169,6 +224,7 @@ function ConfirmScreen() {
             style={styles.confirmButton}
             textStyle={{ fontSize: 16 }}
             loading={isLoading}
+            disabled={quoteLoading}
           >
             {!isLoading && (
               <>
@@ -301,6 +357,14 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "500",
     maxWidth: 200,
+  },
+  totalLabel: {
+    color: colors.foreground,
+    fontWeight: "600",
+  },
+  totalValue: {
+    fontSize: 16,
+    fontWeight: "700",
   },
   warningBox: {
     backgroundColor: "rgba(47, 128, 237, 0.1)", // accent 10

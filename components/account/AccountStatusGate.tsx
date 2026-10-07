@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, Text, StyleSheet, StyleProp, ViewStyle, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -43,6 +43,16 @@ export const AccountStatusBanner: React.FC<{ style?: StyleProp<ViewStyle> }> = (
             <View style={{ flex: 1 }}>
                 <Text style={styles.bannerTitle}>{BLOCK_TITLES[block]}</Text>
                 <Text style={styles.bannerText}>{blockMessage(block, isBusiness)}</Text>
+                {block === 'pending_review' && isBusiness && (
+                    <TouchableOpacity
+                        onPress={() => router.push('/profile/company-documents')}
+                        style={styles.bannerLink}
+                        accessibilityRole="link"
+                    >
+                        <Text style={styles.bannerLinkText}>Subir documentación de la empresa</Text>
+                        <Ionicons name="chevron-forward" size={14} color={colors.accent} />
+                    </TouchableOpacity>
+                )}
             </View>
         </View>
     );
@@ -102,6 +112,17 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: colors.foreground,
         marginBottom: 2,
+    },
+    bannerLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 2,
+        marginTop: spacing.sm,
+    },
+    bannerLinkText: {
+        fontSize: 13,
+        fontWeight: '600',
+        color: colors.accent,
     },
     bannerText: {
         fontSize: 13,

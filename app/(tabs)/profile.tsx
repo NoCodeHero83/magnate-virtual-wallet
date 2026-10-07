@@ -235,6 +235,14 @@ export default function ProfileScreen() {
   };
 
   const securityItems = [
+    ...(company
+      ? [{
+        icon: "document-text-outline" as const,
+        label: "Documentación de la empresa",
+        subtitle: "Estatuto, CUIT y representante",
+        onPress: () => router.push("/profile/company-documents"),
+      }]
+      : []),
     {
       icon: "key-outline" as const,
       label: "Cambiar PIN de acceso",

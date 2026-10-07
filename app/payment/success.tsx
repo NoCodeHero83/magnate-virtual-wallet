@@ -36,6 +36,10 @@ export default function SuccessScreen() {
     typeof params.recipientName === "string"
       ? params.recipientName
       : "Desconocido";
+  // Comisión cobrada (si hubo)
+  const commission = Number(typeof params.commission === "string" ? params.commission : 0) || 0;
+  const totalDebit = Number(typeof params.totalDebit === "string" ? params.totalDebit : 0) || 0;
+  const amountSent = Number(typeof params.amountSent === "string" ? params.amountSent : 0) || 0;
   const reference_number =
     typeof params.reference_number === "string"
       ? params.reference_number
@@ -182,6 +186,24 @@ export default function SuccessScreen() {
                     <Text style={styles.value}>{recipientName}</Text>
                   </View>
                 </View>
+
+                {commission > 0 && (
+                  <>
+                    <View style={styles.divider} />
+                    <View style={styles.metaRow}>
+                      <Text style={styles.label}>Enviado</Text>
+                      <Text style={styles.metaValue}>{formatCurrency(amountSent)}</Text>
+                    </View>
+                    <View style={[styles.metaRow, { marginTop: spacing.sm }]}>
+                      <Text style={styles.label}>Comisión</Text>
+                      <Text style={styles.metaValue}>{formatCurrency(commission)}</Text>
+                    </View>
+                    <View style={[styles.metaRow, { marginTop: spacing.sm }]}>
+                      <Text style={styles.label}>Total debitado</Text>
+                      <Text style={styles.metaValue}>{formatCurrency(totalDebit)}</Text>
+                    </View>
+                  </>
+                )}
 
                 <View style={styles.divider} />
 
