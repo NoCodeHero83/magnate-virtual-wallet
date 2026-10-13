@@ -24,6 +24,13 @@ function RootLayoutNav() {
         const inTabsGroup = segments[0] === '(tabs)';
 
         if (session && user) {
+            // PIN de 4 dígitos: hay que crear uno de 6 antes de usar la app
+            if (user.pin_upgrade_required) {
+                if (!(inTabsGroup && (segments as string[])[1] === 'change-pin')) {
+                    router.replace('/(tabs)/change-pin');
+                }
+                return;
+            }
             if (inAuthGroup) {
                 // Si hay sesión Y usuario verificado, y estamos en grupo auth (login/register), ir a tabs
                 router.replace('/(tabs)');

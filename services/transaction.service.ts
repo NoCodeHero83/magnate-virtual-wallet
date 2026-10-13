@@ -210,6 +210,9 @@ export const transactionService = {
       if (error.message?.includes("DESTINATION_NOT_FOUND")) {
         throw new Error("No encontramos una cuenta con ese alias, CVU o CBU.");
       }
+      if (error.message?.includes("PIN_UPGRADE_REQUIRED")) {
+        throw new Error("Por seguridad debes crear un PIN de 6 dígitos. Cierra sesión y vuelve a ingresar.");
+      }
       if (error.message?.includes("DESTINATION_NOT_ACTIVE")) {
         throw new Error("La cuenta destino no está habilitada para recibir transferencias.");
       }

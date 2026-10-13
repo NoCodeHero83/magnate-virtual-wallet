@@ -199,6 +199,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     } else if (msg.includes("ACCOUNT_NOT_ACTIVE")) {
       userMessage = "La cuenta de origen no está activa";
       statusCode = 403;
+    } else if (msg.includes("PIN_UPGRADE_REQUIRED")) {
+      userMessage = "El titular debe actualizar su PIN a 6 dígitos desde la app";
+      statusCode = 403;
     } else if (msg.includes("SAME_ACCOUNT")) {
       userMessage = "No podés transferir a tu propia cuenta";
     } else if (msg.includes("UNAUTHORIZED")) {

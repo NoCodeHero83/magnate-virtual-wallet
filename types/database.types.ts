@@ -48,6 +48,8 @@ export interface User {
   web_access_enabled_at: string | null;
   verification_status: VerificationStatus;
   account_type: UserAccountType;
+  /** Tiene un PIN de 4 dígitos: debe crear uno de 6 antes de operar */
+  pin_upgrade_required?: boolean;
   /** Motivo del estado (ej. motivo de rechazo). 'pending_approval' mientras espera revisión */
   status_reason: string | null;
   zapsign_verification_id: string | null;

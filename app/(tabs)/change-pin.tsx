@@ -12,7 +12,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { colors, spacing, borderRadius, typography } from "../../theme";
-import { PIN_LENGTH } from "../../constants/app";
+import { PIN_LENGTH, LEGACY_PIN_LENGTH } from "../../constants/app";
+import { useAuth } from "../../context/AuthContext";
 import { ScreenHeader } from "../../components/layout";
 import {
   logout,
@@ -55,6 +56,9 @@ export default function ChangePinScreen() {
   });
 
   const insets = useSafeAreaInsets();
+  // PIN de 4 dígitos: cambio obligatorio a uno de 6
+  const { user } = useAuth();
+  const upgrade = !!user?.pin_upgrade_required;
 
   // Reset state on mount to ensure clean slate
   useFocusEffect(
@@ -72,7 +76,7 @@ export default function ChangePinScreen() {
     setKeypadNumbers(shuffleArray([1, 2, 3, 4, 5, 6, 7, 8, 9, 0]));
   }, [step]);
 
-  const currentInputLength = step === "otp" ? 6 : PIN_LENGTH;
+  const currentInputLength = step === "otp" ? 6 : step === "current" && upgrade ? LEGACY_PIN_LENGTH : PIN_LENGTH;
 
   const currentVal =
     step === "current"
@@ -215,11 +219,13 @@ export default function ChangePinScreen() {
   const getSubtitle = () => {
     switch (step) {
       case "current":
-        return "Ingresa tu PIN actual para continuar";
+        return upgrade
+          ? `Por seguridad, el PIN ahora es de ${PIN_LENGTH} dígitos. Ingresa tu PIN actual de ${LEGACY_PIN_LENGTH} dígitos para crear uno nuevo.`
+          : "Ingresa tu PIN actual para continuar";
       case "otp":
         return "Ingresa el código de 6 dígitos enviado a tu email";
       case "new":
-        return "Crea tu nuevo PIN de acceso";
+        return `Crea tu nuevo PIN de ${PIN_LENGTH} dígitos`;
       case "confirm":
         return "Ingresa nuevamente tu nuevo PIN";
     }
@@ -233,8 +239,8 @@ export default function ChangePinScreen() {
       ]}
     >
       <ScreenHeader
-        title="Cambiar PIN"
-        showBackButton={true}
+        title={upgrade ? "Actualiza tu PIN" : "Cambiar PIN"}
+        showBackButton={!upgrade}
         onBack={() => router.back()}
       />
 

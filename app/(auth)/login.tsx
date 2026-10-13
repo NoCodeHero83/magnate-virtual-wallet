@@ -17,7 +17,7 @@ import { Button, Input, AlertDialog, Toast, ToastType } from '../../components/u
 import { LogoIcon } from '../../components/LogoIcon';
 import { FeatureCard, PinIndicator, PinKeypad, LoginProcessingModal } from '../../components/login';
 import { colors, spacing, borderRadius, typography } from '../../theme';
-import { PIN_LENGTH, APP_VERSION } from '../../constants/app';
+import { PIN_LENGTH, LEGACY_PIN_LENGTH, APP_VERSION } from '../../constants/app';
 import { useAuth } from '../../context/AuthContext';
 import { validateEmail, validatePIN } from '../../utils/validators';
 import { getLastUser, clearLastUser, SavedUser } from '../../services/storage.service';
@@ -110,7 +110,8 @@ export default function LoginScreen() {
             return;
         }
 
-        if (pin.length !== PIN_LENGTH) {
+        // Un PIN de 4 dígitos (versión anterior) todavía entra; después se pide crear uno de 6
+        if (pin.length !== PIN_LENGTH && pin.length !== LEGACY_PIN_LENGTH) {
             showToast(`Por favor ingrese su PIN de ${PIN_LENGTH} dígitos`, 'error');
             return;
         }
@@ -235,6 +236,9 @@ export default function LoginScreen() {
                                 <Ionicons name="lock-closed" size={16} color={colors.accent} />
                                 <Text style={styles.pinTitle}>Ingrese su PIN de {PIN_LENGTH} dígitos</Text>
                             </View>
+                            <Text style={styles.pinHint}>
+                                ¿Tu PIN es de {LEGACY_PIN_LENGTH} dígitos? Ingrésalo y te pediremos crear uno nuevo.
+                            </Text>
 
                             {/* PIN Indicators */}
                             <View style={styles.pinIndicatorsContainer}>
@@ -427,6 +431,13 @@ const styles = StyleSheet.create({
     registerText: {
         fontSize: typography.sizes.sm,
         color: colors.accent,
+    },
+    pinHint: {
+        fontSize: 12,
+        color: colors.mutedForeground,
+        textAlign: 'center',
+        marginTop: -4,
+        marginBottom: 8,
     },
     forgotText: {
         fontSize: typography.sizes.sm,
