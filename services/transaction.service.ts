@@ -190,8 +190,9 @@ export const transactionService = {
     amount: number,
     concept: string = "",
     paymentMethod: "alias" | "cbu" | "cvu" = "alias",
+    pin: string = "",
   ): Promise<any> {
-    // Solo desde un dispositivo de confianza (lo valida el servidor con el secreto del dispositivo)
+    // Solo desde un dispositivo de confianza y con el PIN (los valida el servidor)
     const { data, error } = await supabase.rpc("transfer_from_device", {
       p_from_account_id: fromAccountId,
       p_to_identifier: toIdentifier,
@@ -199,10 +200,24 @@ export const transactionService = {
       p_concept: concept,
       p_payment_method: paymentMethod,
       p_device: await getDeviceDescriptor(),
+      p_pin: pin,
     } as any);
 
+    // PIN incorrecto o bloqueado: el servidor lo devuelve (no lo lanza) para contar el intento
+    const pinResult = data as any;
+    if (!error && pinResult?.success === false) {
+      if (pinResult.error === "INVALID_PIN") {
+        throw new Error(`PIN incorrecto. Intentos restantes: ${pinResult.attempts_left ?? 0}`);
+      }
+      if (pinResult.error === "PIN_LOCKED") {
+        const minutes = Math.max(1, Math.ceil((pinResult.retry_after_seconds ?? 900) / 60));
+        throw new Error(`Demasiados intentos incorrectos. Intenta nuevamente en ${minutes} minutos.`);
+      }
+      throw new Error("No se pudo realizar la transferencia");
+    }
+
     if (error) {
-      console.error("Error processing transfer:", error);
+      console.error("Error processing transfer:", error.message);
       // Mensajes legibles para los errores de cuentas no habilitadas (pendientes de aprobación, bloqueadas)
       if (error.message?.includes("DEVICE_NOT_TRUSTED")) {
         throw new Error("Este dispositivo no está verificado. Cierra sesión y vuelve a ingresar para verificarlo.");

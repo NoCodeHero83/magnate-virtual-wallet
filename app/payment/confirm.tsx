@@ -8,7 +8,7 @@ import {
   TextInput,
   ActivityIndicator,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -19,32 +19,29 @@ import {
   shadows,
 } from "../../theme";
 import { formatCurrency, getInitials } from "../../utils/formatters";
-import { Button, AlertDialog } from "../../components/ui";
+import { Button, AlertDialog, PinPromptDialog } from "../../components/ui";
 import { useAuth } from "../../context/AuthContext";
 import { transactionService, TransferQuote } from "../../services/transaction.service";
 import { parseAmount } from "../../utils/formatters";
 import { withOperationalAccount } from '../../components/account/AccountStatusGate';
+import { clearPendingTransfer, getPendingTransfer } from "../../services/pendingTransfer";
 
 function ConfirmScreen() {
   const { account } = useAuth();
   const router = useRouter();
-  const params = useLocalSearchParams();
-  console.log("params", params);
+  // Solo se confirma lo elegido en la pantalla Transferir (nunca parámetros de un link)
+  const [pending] = useState(getPendingTransfer);
+  const amount = pending?.amount ?? "0";
+  const recipient = pending?.recipientName ?? "";
+  const concept = pending?.concept ?? "";
+  const identifier = pending?.identifier ?? "";
 
-  // Extract params correctly
-  const amount = typeof params.amount === "string" ? params.amount : "0";
-  const recipient =
-    typeof params.recipientName === "string"
-      ? params.recipientName
-      : "Desonocido";
-  const concept = typeof params.concept === "string" ? params.concept : "";
-  const toAccountId =
-    typeof params.toAccountId === "string" ? params.toAccountId : "";
-  const isExternal = params.isExternal === "true";
-  const identifier =
-    typeof params.identifier === "string" ? params.identifier : "";
+  useEffect(() => {
+    if (!pending) router.replace("/(tabs)/transfer");
+  }, [pending]);
 
   const [isLoading, setIsLoading] = useState(false);
+  const [pinPromptVisible, setPinPromptVisible] = useState(false);
   // Comisión calculada por el servidor (null mientras carga o si no se pudo calcular)
   const [quote, setQuote] = useState<TransferQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(true);
@@ -93,8 +90,15 @@ function ConfirmScreen() {
     setAlertConfig({ visible: true, title, description, variant });
   };
 
-  const handleConfirm = async () => {
-    if (!account || isLoading) return;
+  // Confirmar pide el PIN; la transferencia sale al ingresarlo
+  const handleConfirm = () => {
+    if (!account || isLoading || !pending) return;
+    setPinPromptVisible(true);
+  };
+
+  const handleTransfer = async (pin: string) => {
+    if (!account || isLoading || !pending) return;
+    setPinPromptVisible(false);
     setIsLoading(true);
 
     try {
@@ -106,7 +110,9 @@ function ConfirmScreen() {
         parseAmount(amount),
         concept,
         method,
+        pin,
       );
+      clearPendingTransfer();
 
       // Navigate to Success
       router.push({
@@ -132,8 +138,17 @@ function ConfirmScreen() {
     }
   };
 
+  if (!pending) return null;
+
   return (
     <SafeAreaView style={styles.container} edges={["top"]}>
+      <PinPromptDialog
+        visible={pinPromptVisible}
+        onClose={() => setPinPromptVisible(false)}
+        onConfirm={handleTransfer}
+        title="Confirma la transferencia"
+        description={`Ingresa tu PIN para enviar $ ${amount} a ${recipient}.`}
+      />
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity

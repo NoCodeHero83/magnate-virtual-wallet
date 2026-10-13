@@ -22,6 +22,7 @@ import { AccountLimit } from "../../types/database.types";
 import { parseAmount, formatCurrency } from "../../utils/formatters";
 import { getSupportEmail } from "../../services/settings.service";
 import { withOperationalAccount } from '../../components/account/AccountStatusGate';
+import { setPendingTransfer } from "../../services/pendingTransfer";
 
 function TransferScreen() {
   const { colors } = useTheme();
@@ -128,18 +129,15 @@ function TransferScreen() {
   const handleTransfer = async () => {
     if (!canTransfer) return;
 
-    // Si es válido, navegar a confirmación con datos enriquecidos
-    router.push({
-      pathname: "/payment/confirm",
-      params: {
-        amount,
-        recipientName: recipientData.holder,
-        concept,
-        toAccountId: recipientData.accountId, // Pasamos el ID real si es interno
-        isExternal: recipientData.isExternal ? "true" : "false",
-        identifier: recipient,
-      },
+    // Los datos van en memoria, no en la ruta: un link externo no puede armar la confirmación
+    setPendingTransfer({
+      amount,
+      recipientName: recipientData.holder,
+      concept,
+      isExternal: !!recipientData.isExternal,
+      identifier: recipient,
     });
+    router.push("/payment/confirm");
   };
 
   const handleValidationChange = (isValid: boolean, data?: any) => {
