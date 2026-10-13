@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { ScreenHeader } from '../../components/layout';
 import { FormInput } from '../../components/register/FormInput';
-import { Button, AlertDialog } from '../../components/ui';
+import { Button, AlertDialog, PinPromptDialog } from '../../components/ui';
 import { spacing, borderRadius } from '../../theme';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -28,6 +28,7 @@ export default function WebAccessScreen() {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [loading, setLoading] = useState(false);
     const [isPasswordFocused, setIsPasswordFocused] = useState(false);
+    const [pinPromptVisible, setPinPromptVisible] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -67,7 +68,7 @@ export default function WebAccessScreen() {
 
         if (!webAccessEnabled) {
             setLoading(true);
-            const res = await updateWebAccess(user.id, false);
+            const res = await updateWebAccess(false);
             setLoading(false);
             if (res.success) {
                 await refreshUser();
@@ -93,9 +94,15 @@ export default function WebAccessScreen() {
             return;
         }
 
+        // Activar el acceso o cambiar la contraseña exige el PIN
+        setPinPromptVisible(true);
+    };
+
+    const handleConfirmPin = async (pin: string) => {
         setLoading(true);
-        const res = await updateWebAccess(user.id, true, password);
+        const res = await updateWebAccess(true, pin, password);
         setLoading(false);
+        setPinPromptVisible(false);
 
         if (res.success) {
             await refreshUser();
@@ -109,6 +116,13 @@ export default function WebAccessScreen() {
 
     return (
         <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+            <PinPromptDialog
+                visible={pinPromptVisible}
+                onClose={() => setPinPromptVisible(false)}
+                onConfirm={handleConfirmPin}
+                loading={loading}
+                description="Ingresa tu PIN para guardar la contraseña de acceso web."
+            />
             <ScreenHeader
                 title="Acceso Web"
                 showBackButton={true}

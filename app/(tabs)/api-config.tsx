@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { ScreenHeader } from '../../components/layout';
 import { FormInput } from '../../components/register/FormInput';
-import { Button, AlertDialog } from '../../components/ui';
+import { Button, AlertDialog, PinPromptDialog } from '../../components/ui';
 import { spacing, borderRadius } from '../../theme';
 import { useTheme } from '../../context/ThemeContext';
 import { supabase } from '../../lib/supabase';
@@ -56,6 +56,10 @@ function ApiConfigScreen() {
     const [loadingEnable, setLoadingEnable] = useState(false);
     const [loadingPassword, setLoadingPassword] = useState(false);
     const [loadingIps, setLoadingIps] = useState(false);
+
+    // Habilitar, cambiar la contraseña o las IPs exige el PIN (lo valida api-setup)
+    const [pinAction, setPinAction] = useState<((pin: string) => Promise<void>) | null>(null);
+    const askPin = (action: (pin: string) => Promise<void>) => setPinAction(() => action);
 
     const [alertConfig, setAlertConfig] = useState<{
         visible: boolean;
@@ -174,12 +178,14 @@ function ApiConfigScreen() {
             return;
         }
 
+        askPin(async (pin) => {
         try {
             setLoadingEnable(true);
             const result = await callApiSetup({
                 action: 'enable',
                 client_id_suffix: usernameSuffix.trim(),
                 password,
+                pin,
             });
 
             await loadApiAccess(); // Recargar datos actualizados
@@ -192,6 +198,7 @@ function ApiConfigScreen() {
         } finally {
             setLoadingEnable(false);
         }
+        });
     };
 
     // ── Cambiar contraseña ──────────────────────────────────────────────────
@@ -199,9 +206,10 @@ function ApiConfigScreen() {
     const handleChangePassword = async () => {
         if (!isPasswordValid || !passwordsMatch) return;
 
+        askPin(async (pin) => {
         try {
             setLoadingPassword(true);
-            await callApiSetup({ action: 'update_password', password });
+            await callApiSetup({ action: 'update_password', password, pin });
             setPassword('');
             setConfirmPassword('');
             showAlert('Contraseña actualizada', 'Tu contraseña API fue cambiada correctamente.');
@@ -210,6 +218,7 @@ function ApiConfigScreen() {
         } finally {
             setLoadingPassword(false);
         }
+        });
     };
 
     // ── Agregar IP ──────────────────────────────────────────────────────────
@@ -236,9 +245,10 @@ function ApiConfigScreen() {
     // ── Guardar IPs ─────────────────────────────────────────────────────────
 
     const handleSaveIps = async () => {
+        askPin(async (pin) => {
         try {
             setLoadingIps(true);
-            await callApiSetup({ action: 'update_ips', allowed_ips: whitelistedIps });
+            await callApiSetup({ action: 'update_ips', allowed_ips: whitelistedIps, pin });
             showAlert('IPs guardadas', whitelistedIps.length === 0
                 ? 'Se permite el acceso desde cualquier IP.'
                 : `${whitelistedIps.length} IP(s) configuradas correctamente.`
@@ -248,6 +258,7 @@ function ApiConfigScreen() {
         } finally {
             setLoadingIps(false);
         }
+        });
     };
 
     // ── Render ──────────────────────────────────────────────────────────────
@@ -479,6 +490,17 @@ function ApiConfigScreen() {
                     <View style={{ height: 120 }} />
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            <PinPromptDialog
+                visible={!!pinAction}
+                onClose={() => setPinAction(null)}
+                onConfirm={(pin) => {
+                    const action = pinAction;
+                    setPinAction(null);
+                    action?.(pin);
+                }}
+                description="Ingresa tu PIN para guardar los cambios del acceso API."
+            />
 
             <AlertDialog
                 visible={alertConfig.visible}

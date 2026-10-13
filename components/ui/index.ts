@@ -6,3 +6,4 @@ export * from './Modal';
 export * from './AlertDialog';
 export * from './Toast';
 export * from './Select';
+export * from './PinPromptDialog';

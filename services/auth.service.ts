@@ -709,32 +709,32 @@ export async function getCurrentUser(userId: string) {
 }
 
 /**
- * Actualiza la configuración de Acceso Web
+ * Activa / desactiva el Acceso Web. Activarlo o cambiar la contraseña exige el PIN;
+ * la contraseña se guarda hasheada en el servidor (set_web_access).
  */
-export async function updateWebAccess(userId: string, enabled: boolean, password?: string): Promise<{ success: boolean; error?: string }> {
+export async function updateWebAccess(enabled: boolean, pin?: string, password?: string): Promise<{ success: boolean; error?: string }> {
     try {
-        const updates: any = {
-            web_access_enabled: enabled,
-            updated_at: new Date().toISOString(),
-        };
-
-        if (enabled && password) {
-             const salt = await bcrypt.genSalt(10);
-             const hash = await bcrypt.hash(password, salt);
-             updates.web_password_hash = hash;
-             updates.web_access_enabled_at = new Date().toISOString();
-        }
-
-        const { error } = await supabase
-            .from('users')
-            .update(updates)
-            .eq('id', userId);
-
+        const { data, error } = await supabase.rpc("set_web_access", {
+            p_enabled: enabled,
+            p_pin: pin ?? null,
+            p_password: password ?? null,
+        } as any);
         if (error) throw error;
 
-        return { success: true };
+        const result = data as any;
+        if (result?.success) return { success: true };
+        switch (result?.error) {
+            case "INVALID_PIN":
+                return { success: false, error: `PIN incorrecto. Intentos restantes: ${result.attempts_left ?? 0}` };
+            case "PIN_LOCKED":
+                return { success: false, error: "Demasiados intentos incorrectos. Espera unos minutos antes de volver a intentar." };
+            case "WEAK_PASSWORD":
+                return { success: false, error: "La contraseña no cumple con los requisitos de seguridad." };
+            default:
+                return { success: false, error: "No se pudo actualizar el acceso web." };
+        }
     } catch (error: any) {
-        console.error('Error updating web access:', error);
-        return { success: false, error: error.message };
+        console.error('Error updating web access:', error?.message);
+        return { success: false, error: "No se pudo actualizar el acceso web." };
     }
 }
