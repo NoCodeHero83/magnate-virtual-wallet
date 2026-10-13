@@ -44,8 +44,14 @@ serve(async (req) => {
   if (!token) return json({ error: 'No autorizado' }, 401)
   const { data: caller, error: callerError } = await admin.auth.getUser(token)
   if (callerError || !caller?.user) return json({ error: 'Sesión inválida' }, 401)
-  const { data: callerRow } = await admin.from('users').select('role').eq('id', caller.user.id).maybeSingle()
-  if (callerRow?.role !== 'admin') return json({ error: 'Solo un administrador puede hacer esto' }, 403)
+  // is_admin() con la sesión de quien llama: respeta el 2FA si la base lo exige
+  const asCaller = createClient(
+    Deno.env.get('SUPABASE_URL') ?? '',
+    Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+    { auth: { persistSession: false }, global: { headers: { Authorization: `Bearer ${token}` } } },
+  )
+  const { data: isAdmin } = await asCaller.rpc('is_admin')
+  if (isAdmin !== true) return json({ error: 'Solo un administrador puede hacer esto' }, 403)
 
   let body: any
   try {
