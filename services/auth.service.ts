@@ -8,7 +8,7 @@ bcrypt.setRandomFallback((len) => {
   return Array.from(randomBytes);
 });
 
-import { encrypt, decrypt, generateSecurePassword } from "../utils/crypto";
+import { encrypt, generateSecurePassword } from "../utils/crypto";
 import {
   generateCBU,
   generateCVU,
@@ -99,7 +99,8 @@ interface PinLoginResult {
   user_id?: string;
   verification_status?: VerificationStatus;
   account_type?: UserAccountType;
-  auto_password_encrypted?: string;
+  /** Sesión creada por el servidor (app-login) */
+  session?: { access_token: string; refresh_token: string };
 }
 
 function pinLoginErrorMessage(result: PinLoginResult): string {
@@ -218,10 +219,30 @@ export async function checkDeviceTrust(): Promise<boolean> {
   }
 }
 
-/** Abre la sesión de Supabase con la credencial que entrega el servidor */
-async function signInWithServerCredential(email: string, autoPasswordEncrypted: string): Promise<AuthResult> {
-  const autoPassword = await decrypt(autoPasswordEncrypted);
-  const { error } = await supabase.auth.signInWithPassword({ email, password: autoPassword });
+/** Columnas de users que lee la app (los hashes de PIN y contraseña web no son legibles) */
+export const USER_COLUMNS = "id, first_name, last_name, email, phone, dni, cuit_cuil, web_access_enabled, web_access_enabled_at, verification_status, zapsign_verification_id, zapsign_verified_at, zapsign_data, created_at, updated_at, photo_url, role, zapsign_contract_url, account_type, status_reason, reviewed_by, reviewed_at, pin_upgrade_required";
+
+/** Llama a la edge function app-login (login con PIN o código de dispositivo nuevo) */
+async function callAppLogin(body: Record<string, unknown>): Promise<PinLoginResult | null> {
+  const { data, error } = await supabase.functions.invoke("app-login", {
+    body: { ...body, device: await getDeviceDescriptor() },
+  });
+  if (error) {
+    // Errores con cuerpo JSON (4xx/5xx): se usa el código que devuelve la función
+    try {
+      const parsed = await (error as any)?.context?.json?.();
+      if (parsed?.error) return parsed as PinLoginResult;
+    } catch {
+      // sin cuerpo
+    }
+    return null;
+  }
+  return data as PinLoginResult;
+}
+
+/** Inicia la sesión creada por el servidor */
+async function startSession(session: { access_token: string; refresh_token: string }): Promise<AuthResult> {
+  const { error } = await supabase.auth.setSession(session);
   if (error) {
     return { success: false, error: "Error al iniciar sesión" };
   }
@@ -235,28 +256,21 @@ export async function loginWithPin(
   try {
     const normalizedEmail = email.toLowerCase().trim();
 
-    // El servidor valida el PIN, el estado de la cuenta y el dispositivo.
-    // Solo entrega la credencial si el dispositivo es de confianza; si es nuevo,
-    // envía un código por email y NO hay sesión hasta validarlo.
-    const { data, error: loginError } = await supabase.rpc("login_with_pin", {
-      p_email: normalizedEmail,
-      p_pin: pin,
-      p_device: await getDeviceDescriptor(),
-    } as any);
-
-    if (loginError) {
+    // El servidor valida el PIN, el estado de la cuenta y el dispositivo, y crea la
+    // sesión. Si el dispositivo es nuevo envía un código por email y NO hay sesión
+    // hasta validarlo.
+    const result = await callAppLogin({ action: "pin", email: normalizedEmail, pin });
+    if (!result) {
       return { success: false, error: "Error de conexión" };
     }
-
-    const result = data as PinLoginResult | null;
-    if (result?.error === "DEVICE_VERIFICATION_REQUIRED") {
+    if (result.error === "DEVICE_VERIFICATION_REQUIRED") {
       return { success: true, requireDeviceVerification: true, codeSent: result.code_sent !== false };
     }
-    if (!result?.success || !result.user_id || !result.auto_password_encrypted) {
-      return { success: false, error: result ? pinLoginErrorMessage(result) : "Error de conexión" };
+    if (!result.success || !result.user_id || !result.session) {
+      return { success: false, error: pinLoginErrorMessage(result) };
     }
 
-    const signIn = await signInWithServerCredential(normalizedEmail, result.auto_password_encrypted);
+    const signIn = await startSession(result.session);
     if (!signIn.success) return signIn;
 
     return { success: true, userId: result.user_id, requireDeviceVerification: false };
@@ -272,20 +286,13 @@ export async function loginWithPin(
 export async function verifyDeviceLogin(email: string, code: string): Promise<AuthResult> {
   try {
     const normalizedEmail = email.toLowerCase().trim();
-    const { data, error } = await supabase.rpc("verify_device_login", {
-      p_email: normalizedEmail,
-      p_device: await getDeviceDescriptor(),
-      p_code: code,
-    } as any);
-
-    if (error) return { success: false, error: "Error de conexión" };
-
-    const result = data as PinLoginResult | null;
-    if (!result?.success || !result.user_id || !result.auto_password_encrypted) {
-      return { success: false, error: result ? pinLoginErrorMessage(result) : "Error de conexión" };
+    const result = await callAppLogin({ action: "verify_device", email: normalizedEmail, code });
+    if (!result) return { success: false, error: "Error de conexión" };
+    if (!result.success || !result.user_id || !result.session) {
+      return { success: false, error: pinLoginErrorMessage(result) };
     }
 
-    const signIn = await signInWithServerCredential(normalizedEmail, result.auto_password_encrypted);
+    const signIn = await startSession(result.session);
     if (!signIn.success) return signIn;
     return { success: true, userId: result.user_id };
   } catch (error: any) {
@@ -701,7 +708,7 @@ export async function getCurrentSession() {
 export async function getCurrentUser(userId: string) {
   const { data, error } = await supabase
     .from("users")
-    .select("*")
+    .select(USER_COLUMNS)
     .eq("id", userId)
     .single();
 

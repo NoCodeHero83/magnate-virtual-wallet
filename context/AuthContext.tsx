@@ -8,7 +8,8 @@ import { oneSignalService } from '../services/oneSignalService';
 import { getDisplayName } from '../utils/user';
 
 // users + perfil de empresa (1:1, solo para Persona Jurídica)
-const USER_SELECT = '*, business_profile:business_profiles(*, legal_entity:legal_entity_types(name))';
+import { USER_COLUMNS } from '../services/auth.service';
+const USER_SELECT = `${USER_COLUMNS}, business_profile:business_profiles(*, legal_entity:legal_entity_types(name))`;
 
 interface AuthContextType {
   user: User | null;
