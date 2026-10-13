@@ -45,10 +45,11 @@ function pinError(result: { error?: string; attempts_left?: number }): Response 
   return err(403, "No se pudo validar el PIN");
 }
 
-async function hashPassword(password: string): Promise<string> {
-  const enc = new TextEncoder();
-  const buf = await crypto.subtle.digest("SHA-256", enc.encode(password));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+// bcrypt, calculado en la BD
+async function hashPassword(supabaseAdmin: ReturnType<typeof createClient>, password: string): Promise<string> {
+  const { data, error } = await supabaseAdmin.rpc("_hash_api_password", { p_password: password });
+  if (error || typeof data !== "string") throw new Error("No se pudo procesar la contraseña");
+  return data;
 }
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
@@ -150,7 +151,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (taken) return err(409, "Ese nombre de usuario API ya está en uso. Elegí otro sufijo.");
 
-    const passwordHash = await hashPassword(password);
+    const passwordHash = await hashPassword(supabaseAdmin, password);
 
     if (existing) {
       // Ya tiene registro → actualizar y habilitar
@@ -162,6 +163,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           api_password_hash: passwordHash,
           enabled_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          credentials_changed_at: new Date().toISOString(),
         })
         .eq("id", existing.id);
 
@@ -178,6 +180,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           allowed_ips: [],
           rate_limit_per_minute: 60,
           enabled_at: new Date().toISOString(),
+          credentials_changed_at: new Date().toISOString(),
         });
 
       if (error) return err(500, "Error creando el acceso API");
@@ -223,13 +226,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!/[0-9]/.test(password)) return err(400, "La contraseña debe tener al menos un número");
     if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) return err(400, "La contraseña debe tener al menos un carácter especial");
 
-    const passwordHash = await hashPassword(password);
+    const passwordHash = await hashPassword(supabaseAdmin, password);
 
     const { error } = await supabaseAdmin
       .from("api_access")
       .update({
         api_password_hash: passwordHash,
         updated_at: new Date().toISOString(),
+        credentials_changed_at: new Date().toISOString(),
       })
       .eq("id", existing.id);
 

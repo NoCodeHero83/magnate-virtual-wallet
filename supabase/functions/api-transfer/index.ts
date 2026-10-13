@@ -17,7 +17,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const JWT_SECRET = Deno.env.get("API_JWT_SECRET") ?? "change_me_in_production";
+// Sin valor por defecto: si falta el secreto, ningún token es válido
+const JWT_SECRET = Deno.env.get("API_JWT_SECRET") ?? "";
 
 // ─── Utilidades JWT ───────────────────────────────────────────────────────────
 
@@ -28,6 +29,7 @@ function base64urlDecode(str: string): Uint8Array {
 }
 
 async function verifyJWT(token: string): Promise<Record<string, any>> {
+  if (!JWT_SECRET) throw new Error("API_JWT_SECRET no configurado");
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("Token malformado");
 
@@ -95,7 +97,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   try {
     payload = await verifyJWT(authHeader.slice(7));
   } catch (e) {
-    return err(401, `Token inválido: ${e.message}`);
+    return err(401, "Token inválido o expirado");
   }
 
   const supabase = createClient(
@@ -106,11 +108,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // 2. Verificar api_access habilitado + IP
   const { data: access } = await supabase
     .from("api_access")
-    .select("id, is_enabled, allowed_ips")
+    .select("id, is_enabled, allowed_ips, credentials_changed_at")
     .eq("id", payload.api_access_id)
     .single();
 
   if (!access || !access.is_enabled) return err(403, "Acceso API deshabilitado");
+  // Tokens emitidos antes de habilitar el acceso o de cambiar la contraseña
+  if (access.credentials_changed_at
+      && (payload.iat ?? 0) < Math.floor(new Date(access.credentials_changed_at).getTime() / 1000)) {
+    return err(401, "Token inválido o expirado");
+  }
 
   const clientIp = getClientIp(req);
   if (access.allowed_ips?.length > 0 && !access.allowed_ips.includes(clientIp)) {
