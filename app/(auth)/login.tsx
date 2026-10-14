@@ -293,12 +293,12 @@ export default function LoginScreen() {
 
                                 <Button
                                     onPress={() => {
-                                        router.push('/(auth)/forgot-password');
+                                        router.push({ pathname: '/(auth)/forgot-password', params: email ? { email } : {} });
                                     }}
                                     variant="ghost"
                                     textStyle={styles.forgotText}
                                 >
-                                    Olvido su clave?
+                                    ¿Olvidaste tu PIN?
                                 </Button>
                             </View>
 

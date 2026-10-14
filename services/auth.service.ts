@@ -644,6 +644,37 @@ export async function confirmPinChange(code: string, newPin: string): Promise<Pi
 }
 
 /**
+ * PIN olvidado, paso 1: pide un código por email. El servidor responde siempre igual,
+ * exista o no el email.
+ */
+export async function requestPinReset(email: string): Promise<PinChangeResult> {
+  try {
+    const { data, error } = await supabase.rpc("request_pin_reset", { p_email: email.trim() } as any);
+    if (error) return { success: false, error: "Error de conexión" };
+    return pinChangeResult(data);
+  } catch (error: any) {
+    return { success: false, error: error.message || "Error desconocido" };
+  }
+}
+
+/**
+ * PIN olvidado, paso 2: valida el código y guarda el nuevo PIN.
+ */
+export async function confirmPinReset(email: string, code: string, newPin: string): Promise<PinChangeResult> {
+  try {
+    const { data, error } = await supabase.rpc("confirm_pin_reset", {
+      p_email: email.trim(),
+      p_code: code,
+      p_new_pin: newPin,
+    } as any);
+    if (error) return { success: false, error: "Error de conexión" };
+    return pinChangeResult(data);
+  } catch (error: any) {
+    return { success: false, error: error.message || "Error desconocido" };
+  }
+}
+
+/**
  * Get user devices
  */
 export async function getUserDevices() {

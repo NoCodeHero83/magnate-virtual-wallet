@@ -7,70 +7,117 @@ import {
     Platform,
     TouchableOpacity,
     ActivityIndicator,
+    ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ScreenHeader } from '../../components/layout';
 import { FormInput } from '../../components/register/FormInput';
 import { Button } from '../../components/ui/Button';
-import { colors, spacing, borderRadius, typography } from '../../theme';
+import { Toast } from '../../components/ui';
+import { PIN_LENGTH } from '../../constants/app';
+import { requestPinReset, confirmPinReset } from '../../services/auth.service';
+import { colors, spacing, borderRadius } from '../../theme';
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const onlyDigits = (value: string, max: number) => value.replace(/\D/g, '').slice(0, max);
 
 export default function ForgotPasswordScreen() {
-    const [email, setEmail] = useState('');
-    const [step, setStep] = useState<'email' | 'sent'>('email');
+    const params = useLocalSearchParams<{ email?: string }>();
+    const [email, setEmail] = useState(typeof params.email === 'string' ? params.email : '');
+    const [step, setStep] = useState<'email' | 'reset' | 'done'>('email');
+    const [code, setCode] = useState('');
+    const [newPin, setNewPin] = useState('');
+    const [confirmPin, setConfirmPin] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [toast, setToast] = useState<{ visible: boolean; message: string; type: 'success' | 'error' }>({
+        visible: false,
+        message: '',
+        type: 'error',
+    });
 
-    const handleSubmit = async () => {
-        if (!email.trim()) {
-            return;
-        }
+    const showToast = (message: string, type: 'success' | 'error' = 'error') => {
+        setToast({ visible: true, message, type });
+    };
 
-        // Validate email format
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            return;
-        }
+    const emailValid = EMAIL_REGEX.test(email.trim());
+    const pinsMatch = newPin === confirmPin;
+    const canConfirm =
+        code.length === 6 && newPin.length === PIN_LENGTH && confirmPin.length === PIN_LENGTH && pinsMatch;
 
+    const handleSendCode = async () => {
+        if (!emailValid || isLoading) return;
         setIsLoading(true);
-
-        // Simulate API call
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-
+        const result = await requestPinReset(email);
         setIsLoading(false);
-        setStep('sent');
+        if (!result.success) {
+            showToast(result.error || 'No se pudo enviar el código');
+            return;
+        }
+        setCode('');
+        setNewPin('');
+        setConfirmPin('');
+        setStep('reset');
+    };
+
+    const handleResend = async () => {
+        if (isLoading) return;
+        setIsLoading(true);
+        const result = await requestPinReset(email);
+        setIsLoading(false);
+        if (result.success) showToast('Si el correo está registrado, te enviamos un código nuevo.', 'success');
+        else showToast(result.error || 'No se pudo enviar el código');
+    };
+
+    const handleConfirm = async () => {
+        if (!canConfirm || isLoading) return;
+        setIsLoading(true);
+        const result = await confirmPinReset(email, code, newPin);
+        setIsLoading(false);
+        if (result.success) {
+            setStep('done');
+            return;
+        }
+        showToast(result.error || 'No se pudo cambiar el PIN');
+        if (result.code === 'INVALID_CODE') {
+            setCode('');
+        } else if (result.code === 'INVALID_NEW_PIN') {
+            setNewPin('');
+            setConfirmPin('');
+        } else if (result.code === 'CODE_EXPIRED' || result.code === 'TOO_MANY_ATTEMPTS') {
+            setCode('');
+            setStep('email');
+        }
     };
 
     return (
         <SafeAreaView style={styles.container} edges={['top']}>
             <ScreenHeader
-                title="Recuperar Clave"
-                showBackButton={true}
+                title="Recuperar PIN"
+                showBackButton={step !== 'done'}
                 showAvatar={false}
                 showMenu={false}
-                centerTitle={step === 'sent'}
-                onBack={() => step === 'sent' ? setStep('email') : router.back()}
+                centerTitle={step !== 'email'}
+                onBack={() => (step === 'reset' ? setStep('email') : router.back())}
             />
 
             <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                 style={styles.keyboardView}
             >
-                <View style={styles.content}>
-                    {step === 'email' ? (
+                <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+                    {step === 'email' && (
                         <View style={styles.formContainer}>
-                            {/* Icon */}
                             <View style={styles.iconContainer}>
                                 <Ionicons name="key-outline" size={40} color={colors.accent} />
                             </View>
 
-                            {/* Text */}
-                            <Text style={styles.title}>Recuperar Contraseña</Text>
+                            <Text style={styles.title}>¿Olvidaste tu PIN?</Text>
                             <Text style={styles.subtitle}>
-                                Ingresa tu correo electrónico y te enviaremos un enlace para restablecer tu PIN.
+                                Ingresa el correo de tu cuenta y te enviaremos un código para crear un PIN nuevo.
                             </Text>
 
-                            {/* Email Input */}
                             <FormInput
                                 label="Correo Electrónico"
                                 placeholder="ejemplo@magnate.com"
@@ -78,72 +125,129 @@ export default function ForgotPasswordScreen() {
                                 onChangeText={setEmail}
                                 keyboardType="email-address"
                                 autoCapitalize="none"
+                                autoCorrect={false}
                                 icon="mail-outline"
+                                containerStyle={styles.fullWidth}
                             />
 
-                            {/* Submit Button */}
                             <Button
-                                onPress={handleSubmit}
-                                disabled={isLoading || !email.trim()}
+                                onPress={handleSendCode}
+                                disabled={isLoading || !emailValid}
                                 loading={isLoading}
                                 style={styles.submitButton}
                             >
-                                Enviar Enlace
+                                Enviar código
                             </Button>
 
-                            {/* Back to Login */}
-                            <TouchableOpacity
-                                onPress={() => router.back()}
-                                style={styles.backToLogin}
-                            >
-                                <Text style={styles.backToLoginText}>Volver al inicio de sesión</Text>
+                            <TouchableOpacity onPress={() => router.back()} style={styles.linkButton}>
+                                <Text style={styles.linkText}>Volver al inicio de sesión</Text>
                             </TouchableOpacity>
                         </View>
-                    ) : (
+                    )}
+
+                    {step === 'reset' && (
+                        <View style={styles.formContainer}>
+                            <View style={styles.iconContainer}>
+                                <Ionicons name="mail-open-outline" size={40} color={colors.accent} />
+                            </View>
+
+                            <Text style={styles.title}>Revisa tu correo</Text>
+                            <Text style={styles.subtitle}>
+                                Si el correo está registrado, te enviamos un código de 6 dígitos a
+                            </Text>
+                            <View style={styles.emailBadge}>
+                                <Text style={styles.emailBadgeText}>{email.trim()}</Text>
+                            </View>
+
+                            <FormInput
+                                label="Código"
+                                placeholder="000000"
+                                value={code}
+                                onChangeText={(t) => setCode(onlyDigits(t, 6))}
+                                keyboardType="number-pad"
+                                textContentType="oneTimeCode"
+                                autoComplete="one-time-code"
+                                maxLength={6}
+                                icon="keypad-outline"
+                                containerStyle={styles.fullWidth}
+                            />
+                            <FormInput
+                                label={`Nuevo PIN (${PIN_LENGTH} dígitos)`}
+                                placeholder="••••••"
+                                value={newPin}
+                                onChangeText={(t) => setNewPin(onlyDigits(t, PIN_LENGTH))}
+                                keyboardType="number-pad"
+                                secureTextEntry
+                                maxLength={PIN_LENGTH}
+                                icon="lock-closed-outline"
+                                containerStyle={styles.fullWidth}
+                            />
+                            <FormInput
+                                label="Repetir PIN"
+                                placeholder="••••••"
+                                value={confirmPin}
+                                onChangeText={(t) => setConfirmPin(onlyDigits(t, PIN_LENGTH))}
+                                keyboardType="number-pad"
+                                secureTextEntry
+                                maxLength={PIN_LENGTH}
+                                icon="lock-closed-outline"
+                                containerStyle={styles.fullWidth}
+                                error={confirmPin.length === PIN_LENGTH && !pinsMatch ? 'Los PIN no coinciden' : undefined}
+                            />
+
+                            <Button
+                                onPress={handleConfirm}
+                                disabled={isLoading || !canConfirm}
+                                loading={isLoading}
+                                style={styles.submitButton}
+                            >
+                                Cambiar PIN
+                            </Button>
+
+                            <TouchableOpacity onPress={handleResend} disabled={isLoading} style={styles.linkButton}>
+                                <Text style={styles.linkText}>¿No te llegó? Reenviar código</Text>
+                            </TouchableOpacity>
+                            <Text style={styles.infoText}>
+                                Revisa también la carpeta de spam. El código vence en 10 minutos.
+                            </Text>
+                        </View>
+                    )}
+
+                    {step === 'done' && (
                         <View style={styles.successContainer}>
-                            {/* Success Icon */}
                             <View style={styles.successIconContainer}>
                                 <View style={styles.successPulse}>
                                     <View style={styles.successCircle}>
-                                        <Ionicons name="mail-open-outline" size={44} color={colors.success} />
+                                        <Ionicons name="checkmark-circle-outline" size={44} color={colors.success} />
                                     </View>
                                 </View>
                             </View>
 
-                            {/* Title */}
-                            <Text style={styles.title}>¡Correo Enviado!</Text>
-                            <Text style={styles.subtitle}>Hemos enviado un enlace de recuperación a:</Text>
-
-                            <View style={styles.emailBadge}>
-                                <Text style={styles.emailBadgeText}>{email}</Text>
-                            </View>
-
-                            <Text style={styles.infoText}>
-                                Revisa tu bandeja de entrada y sigue las instrucciones para restablecer tu PIN. Si no lo encuentras, revisa la carpeta de spam.
+                            <Text style={styles.title}>¡PIN actualizado!</Text>
+                            <Text style={styles.subtitle}>
+                                Ya puedes ingresar con tu nuevo PIN. Por seguridad, cerramos las sesiones abiertas.
                             </Text>
 
-                            {/* Actions */}
-                            <View style={styles.actions}>
-                                <Button
-                                    onPress={() => router.replace('/(auth)/login')}
-                                    style={styles.loginButton}
-                                >
-                                    Ir al Login
-                                </Button>
-                                <TouchableOpacity
-                                    onPress={() => setStep('email')}
-                                    style={styles.anotherEmail}
-                                >
-                                    <Text style={styles.anotherEmailText}>Usar otro correo</Text>
-                                </TouchableOpacity>
-                            </View>
+                            <Button onPress={() => router.replace('/(auth)/login')} style={styles.submitButton}>
+                                Ir al Login
+                            </Button>
                         </View>
                     )}
-                </View>
+                </ScrollView>
 
-                {/* Version */}
-                <Text style={styles.versionText}>v2.4.0 Secure Build</Text>
+                {isLoading && (
+                    <View style={styles.loadingOverlay} pointerEvents="none">
+                        <ActivityIndicator size="large" color={colors.accent} />
+                    </View>
+                )}
             </KeyboardAvoidingView>
+
+            <Toast
+                visible={toast.visible}
+                message={toast.message}
+                type={toast.type}
+                onHide={() => setToast((prev) => ({ ...prev, visible: false }))}
+            />
         </SafeAreaView>
     );
 }
@@ -157,13 +261,17 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     content: {
-        flex: 1,
+        flexGrow: 1,
         paddingHorizontal: spacing.lg,
         paddingTop: spacing.xl,
+        paddingBottom: spacing.xl,
     },
     formContainer: {
         flex: 1,
         alignItems: 'center',
+    },
+    fullWidth: {
+        width: '100%',
     },
     iconContainer: {
         width: 80,
@@ -193,10 +301,10 @@ const styles = StyleSheet.create({
         height: 56,
         marginTop: spacing.lg,
     },
-    backToLogin: {
+    linkButton: {
         marginTop: spacing.xl,
     },
-    backToLoginText: {
+    linkText: {
         fontSize: 14,
         color: colors.mutedForeground,
         fontWeight: '500',
@@ -205,7 +313,6 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        marginTop: -spacing['3xl'], // Offset up for better centering in view
     },
     successIconContainer: {
         marginBottom: spacing.xl,
@@ -231,6 +338,7 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.base,
         paddingVertical: 8,
         borderRadius: borderRadius.md,
+        marginTop: -spacing.lg,
         marginBottom: spacing.xl,
     },
     emailBadgeText: {
@@ -243,31 +351,13 @@ const styles = StyleSheet.create({
         color: colors.mutedForeground,
         textAlign: 'center',
         lineHeight: 18,
+        marginTop: spacing.md,
         marginHorizontal: spacing.xl,
-        marginBottom: spacing['2xl'],
     },
-    actions: {
-        width: '100%',
-        gap: spacing.md,
-    },
-    loginButton: {
-        width: '100%',
-        height: 56,
-    },
-    anotherEmail: {
+    loadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        justifyContent: 'center',
         alignItems: 'center',
-        paddingVertical: spacing.sm,
-    },
-    anotherEmailText: {
-        fontSize: 14,
-        color: colors.mutedForeground,
-        fontWeight: '500',
-    },
-    versionText: {
-        fontSize: 10,
-        color: colors.mutedForeground,
-        textAlign: 'center',
-        marginBottom: spacing.lg,
-        fontWeight: '500',
     },
 });
