@@ -8,7 +8,6 @@ import { AuthProvider, useAuth } from '../context/AuthContext';
 import { LogoIcon } from '../components/LogoIcon';
 import { colors } from '../theme';
 import { oneSignalService } from '../services/oneSignalService';
-import { supabase } from '../lib/supabase';
 import { InactivityWrapper } from '../components/InactivityWrapper';
 import { UpdateModal } from '../components/UpdateModal';
 
@@ -68,23 +67,8 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
     useEffect(() => {
-        // 1. Inicializar OneSignal
+        // Inicializar OneSignal. El login/logout de OneSignal lo hace AuthContext.
         oneSignalService.initialize();
-
-        // 2. Escuchar cambios de autenticación
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(
-            async (event, session) => {
-                if (event === 'SIGNED_IN' && session?.user) {
-                    await oneSignalService.loginUser(session.user.id);
-                } else if (event === 'SIGNED_OUT') {
-                    await oneSignalService.logoutUser();
-                }
-            }
-        );
-
-        return () => {
-            subscription.unsubscribe();
-        };
     }, []);
 
     return (

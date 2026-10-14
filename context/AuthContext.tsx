@@ -59,20 +59,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     checkSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      (event, session) => {
         console.log('🔐 Auth event:', event);
         setSession(session);
 
-        if (event === 'SIGNED_IN' && session) {
-          await loadUserData(session.user.id);
-          // ✅ Vincular con OneSignal después del login
-          await oneSignalService.loginUser(session.user.id);
-        } else if (event === 'SIGNED_OUT') {
-          setUser(null);
-          setAccount(null);
-          // ✅ Desvincular de OneSignal al hacer logout
-          await oneSignalService.logoutUser();
-        }
+        // Este callback corre con el lock de auth tomado (setSession lo espera).
+        // Consultar Supabase acá adentro lo deja esperando ese mismo lock y la app
+        // queda cargando para siempre; por eso el trabajo se difiere.
+        setTimeout(async () => {
+          if (event === 'SIGNED_IN' && session) {
+            await loadUserData(session.user.id);
+            // ✅ Vincular con OneSignal después del login
+            await oneSignalService.loginUser(session.user.id);
+          } else if (event === 'SIGNED_OUT') {
+            setUser(null);
+            setAccount(null);
+            // ✅ Desvincular de OneSignal al hacer logout
+            await oneSignalService.logoutUser();
+          }
+        }, 0);
       }
     );
 
