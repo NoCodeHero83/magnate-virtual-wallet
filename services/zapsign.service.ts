@@ -1,4 +1,4 @@
-import { ZAPSIGN_CONFIG, isTestEnv, isProductionEnv } from '../config/environment';
+import { ZAPSIGN_CONFIG, isProductionEnv } from '../config/environment';
 
 export interface ZapSignDocument {
     token: string;
@@ -35,7 +35,6 @@ export interface GetSignerUrlResult {
 
 /**
  * Crea un documento en ZapSign para que el usuario lo firme durante el registro.
- * En modo test sin API key → usa un mock local.
  */
 export async function createZapSignDocument(
     userName: string,
@@ -43,16 +42,6 @@ export async function createZapSignDocument(
 ): Promise<CreateDocumentResult> {
     const name = (userName || '').trim();
     const email = (userEmail || '').trim().toLowerCase();
-    // --- MODO MOCK (test sin API key) ---
-    if (isTestEnv && !ZAPSIGN_CONFIG.apiKey) {
-        console.log('[ZapSign] Modo MOCK activo (test sin API key)');
-        return {
-            success: true,
-            signUrl: 'https://mock-zapsign.local/mock-sign',
-            docToken: 'mock-doc-token-' + Date.now(),
-        };
-    }
-
     console.log('[ZapSign] Enviando request a:', `${ZAPSIGN_CONFIG.baseUrl}/api/v1/models/create-doc/`);
     console.log('[ZapSign] Token cargado por Expo:', `***${ZAPSIGN_CONFIG.apiKey.slice(-4)}`);
     console.log('[ZapSign] Template ID:', ZAPSIGN_CONFIG.templateId);
@@ -161,23 +150,6 @@ export async function getSignerUrl(docToken: string): Promise<GetSignerUrlResult
 export async function getSignedDocumentUrl(
     docToken: string,
 ): Promise<GetSignedUrlResult> {
-    // --- MODO MOCK ---
-    if (isTestEnv && !ZAPSIGN_CONFIG.apiKey) {
-        return {
-            success: true,
-            signedFileUrl: 'https://mock-zapsign.local/mock-signed-document.pdf',
-            status: 'signed',
-        };
-    }
-
-    if (docToken.startsWith('mock-doc-token-')) {
-        return {
-            success: true,
-            signedFileUrl: 'https://mock-zapsign.local/mock-signed-document.pdf',
-            status: 'signed',
-        };
-    }
-
     try {
         const response = await fetch(`${ZAPSIGN_CONFIG.baseUrl}/api/v1/docs/${docToken}/`, {
             method: 'GET',
@@ -270,17 +242,6 @@ export interface ZapSignIdentityResult {
     error?: string;
 }
 
-function mockValidationResult(): GetSignerValidationResult {
-    return {
-        success: true,
-        selfieValidationType: 'mock',
-        validations: [
-            { type: 'Identity verification', status: 'success' },
-            { type: 'Name validation', status: 'success' },
-        ],
-    };
-}
-
 /**
  * Devuelve el detalle del documento, incluyendo el token del primer firmante.
  */
@@ -291,12 +252,6 @@ async function getDocumentDetail(docToken: string): Promise<{
     signerToken?: string | null;
     error?: string;
 }> {
-    if (isTestEnv && !ZAPSIGN_CONFIG.apiKey) {
-        return { success: true, status: 'assinado', signedFile: 'mock', signerToken: 'mock-signer-' + docToken };
-    }
-    if (docToken.startsWith('mock-')) {
-        return { success: true, status: 'assinado', signedFile: 'mock', signerToken: 'mock-signer-' + docToken };
-    }
     try {
         const response = await fetch(`${ZAPSIGN_CONFIG.baseUrl}/api/v1/docs/${docToken}/`, {
             method: 'GET',
@@ -323,12 +278,6 @@ async function getDocumentDetail(docToken: string): Promise<{
  * Endpoint: GET /api/v1/signer-verification-details/{signer_token}/
  */
 export async function getSignerValidation(signerToken: string): Promise<GetSignerValidationResult> {
-    if (isTestEnv && !ZAPSIGN_CONFIG.apiKey) {
-        return mockValidationResult();
-    }
-    if (signerToken.startsWith('mock-')) {
-        return mockValidationResult();
-    }
     try {
         const response = await fetch(
             `${ZAPSIGN_CONFIG.baseUrl}/api/v1/signer-verification-details/${signerToken}/`,
