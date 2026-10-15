@@ -153,6 +153,28 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
 
                 <View style={styles.fieldGroup}>
                     <Text style={styles.label}>Fecha de inscripción</Text>
+                    {Platform.OS === 'web' ? (
+                        // Web (solo para probar la app en el navegador): el selector nativo no existe
+                        React.createElement('input', {
+                            type: 'date',
+                            min: toISODate(MIN_INCORPORATION_DATE),
+                            max: toISODate(new Date()),
+                            // No controlado: mientras se escribe el año llegan valores parciales (0002, 0020...)
+                            defaultValue: data.incorporation_date ? toISODate(data.incorporation_date) : '',
+                            onChange: (e: any) => {
+                                const [y, m, d] = String(e.target.value).split('-').map(Number);
+                                onChange('incorporation_date', y >= 1000 && m && d ? new Date(y, m - 1, d) : null);
+                            },
+                            style: {
+                                ...StyleSheet.flatten(styles.dateField),
+                                color: colors.foreground,
+                                fontSize: 16,
+                                colorScheme: 'dark',
+                                borderStyle: 'solid',
+                                outline: 'none',
+                            },
+                        })
+                    ) : (
                     <TouchableOpacity
                         style={styles.dateField}
                         onPress={() => {
@@ -166,6 +188,7 @@ export const StepCompanyData: React.FC<StepCompanyDataProps> = ({ data, onChange
                         </Text>
                         <Ionicons name="calendar-outline" size={20} color={colors.mutedForeground} />
                     </TouchableOpacity>
+                    )}
                 </View>
 
                 <View>
