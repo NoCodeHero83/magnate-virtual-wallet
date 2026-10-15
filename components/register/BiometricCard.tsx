@@ -8,6 +8,7 @@ import { createZapSignDocument, getSignedDocumentUrl, getSignerUrl, verifyZapSig
 import * as SecureStore from 'expo-secure-store';
 import { Camera } from 'expo-camera';
 import { supabase } from '@/lib/supabase';
+import { isTestEnv } from '../../config/environment';
 
 
 type ScanStatus = 'idle' | 'creating' | 'waiting_signature' | 'success' | 'error';
@@ -21,6 +22,9 @@ interface PendingDoc {
     signUrl: string;
     owner: string; // nombre + email para los que se generó el contrato
 }
+
+// Token que queda en zapsign_verification_id cuando se salta la verificación en QA
+const QA_SKIP_TOKEN = 'QA-SIN-ZAPSIGN';
 
 const ownerKey = (name: string, email: string) => `${name.trim().toLowerCase()}|${email.trim().toLowerCase()}`;
 
@@ -261,6 +265,22 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
         handleVerifySignature();
     };
 
+    /** Solo QA (EXPO_PUBLIC_APP_ENV=test): da el paso por hecho sin ZapSign */
+    const handleSkip = async () => {
+        await clearPendingDoc();
+        setErrorMsg('');
+        setStatus('success');
+        onSignatureSuccess?.(QA_SKIP_TOKEN, null);
+    };
+
+    const skipButton = isTestEnv ? (
+        <TouchableOpacity onPress={handleSkip} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 6 }}>
+            <Text style={{ color: colors.mutedForeground, fontSize: 12, textDecorationLine: 'underline' }}>
+                Saltar verificación (solo QA)
+            </Text>
+        </TouchableOpacity>
+    ) : null;
+
     /** Descarta el contrato pendiente y genera uno nuevo */
     const handleRestart = async () => {
         await clearPendingDoc();
@@ -312,6 +332,7 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
                     <TouchableOpacity onPress={handleRestart} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 4 }}>
                         <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>¿Algo salió mal? Empezar de nuevo</Text>
                     </TouchableOpacity>
+                    {skipButton}
                 </View>
             );
         }
@@ -338,6 +359,7 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
                 {status === 'error' && errorMsg ? (
                     <Text style={{ color: colors.destructive, fontSize: 12, marginTop: 4 }}>{errorMsg}</Text>
                 ) : null}
+                {skipButton}
             </View>
         );
     };
