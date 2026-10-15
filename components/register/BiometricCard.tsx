@@ -1,15 +1,42 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import WebView from 'react-native-webview';
 import { colors, spacing, borderRadius } from '../../theme';
-import { createZapSignDocument, getSignerUrl, verifyZapSignIdentity, ZapSignBiometric } from '../../services/zapsign.service';
+import { createZapSignDocument, getSignedDocumentUrl, getSignerUrl, verifyZapSignIdentity, ZapSignBiometric } from '../../services/zapsign.service';
+import * as SecureStore from 'expo-secure-store';
 import { Camera } from 'expo-camera';
 import { supabase } from '@/lib/supabase';
 
 
 type ScanStatus = 'idle' | 'creating' | 'waiting_signature' | 'success' | 'error';
+
+// Documento de ZapSign creado y todavía sin firmar. Se guarda para que, si el usuario
+// cierra la firma o sale del paso, pueda retomarla sin generar un contrato nuevo.
+const PENDING_DOC_KEY = 'zapsign_pending_doc';
+
+interface PendingDoc {
+    docToken: string;
+    signUrl: string;
+    owner: string; // nombre + email para los que se generó el contrato
+}
+
+const ownerKey = (name: string, email: string) => `${name.trim().toLowerCase()}|${email.trim().toLowerCase()}`;
+
+async function loadPendingDoc(): Promise<PendingDoc | null> {
+    try {
+        const raw = await SecureStore.getItemAsync(PENDING_DOC_KEY);
+        return raw ? (JSON.parse(raw) as PendingDoc) : null;
+    } catch {
+        return null;
+    }
+}
+
+const savePendingDoc = (doc: PendingDoc) =>
+    SecureStore.setItemAsync(PENDING_DOC_KEY, JSON.stringify(doc)).catch(() => {});
+
+const clearPendingDoc = () => SecureStore.deleteItemAsync(PENDING_DOC_KEY).catch(() => {});
 
 interface BiometricCardProps {
     userName: string;
@@ -24,6 +51,66 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
     const [isWebViewOpen, setIsWebViewOpen] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
 
+    const owner = ownerKey(userName || '', userEmail || '');
+
+    // Retomar un contrato pendiente de este mismo nombre y email
+    useEffect(() => {
+        let cancelled = false;
+        if (status === 'success' || status === 'creating') return;
+        loadPendingDoc().then((pending) => {
+            if (cancelled) return;
+            if (pending && pending.owner === owner) {
+                setDocToken(pending.docToken);
+                setSignUrl(pending.signUrl);
+                setStatus('waiting_signature');
+            } else if (docToken) {
+                // Cambió el nombre o el email: el contrato anterior ya no corresponde
+                setDocToken(null);
+                setSignUrl(null);
+                setStatus('idle');
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [owner]);
+
+    /** Abre la firma del contrato pendiente si ZapSign lo sigue teniendo sin firmar */
+    const resumePendingDoc = async (): Promise<boolean> => {
+        const pending = await loadPendingDoc();
+        if (!pending || pending.owner !== owner) return false;
+
+        const doc = await getSignedDocumentUrl(pending.docToken);
+        if (!doc.success) {
+            // No se pudo consultar (red): se reintenta con el mismo documento
+            if (!/404|not found|não encontrado/i.test(doc.error ?? '')) {
+                setDocToken(pending.docToken);
+                setSignUrl(pending.signUrl);
+                setStatus('waiting_signature');
+                setErrorMsg('No pudimos conectar con ZapSign. Intenta de nuevo.');
+                setTimeout(() => setErrorMsg(''), 3000);
+                return true;
+            }
+            await clearPendingDoc();
+            return false;
+        }
+
+        setDocToken(pending.docToken);
+        setSignUrl(pending.signUrl);
+        if (doc.signedFileUrl || doc.status === 'signed' || doc.status === 'assinado') {
+            await handleVerifySignature(pending.docToken);
+            return true;
+        }
+        if (doc.status === 'refused' || doc.status === 'recusado') {
+            await clearPendingDoc();
+            return false;
+        }
+        setStatus('waiting_signature');
+        setIsWebViewOpen(true);
+        return true;
+    };
+
     const handleScan = async () => {
         console.log('[BiometricCard] handleScan start');
         if (!userName || !userEmail) {
@@ -33,7 +120,7 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
             return;
         }
 
-        if (status !== 'idle' && status !== 'error') return;
+        if (status !== 'idle' && status !== 'error' && status !== 'waiting_signature') return;
 
         try {
             // Solicitar permiso de cámara antes de abrir WebView
@@ -47,7 +134,10 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
             }
 
             setStatus('creating');
-            
+
+            // Si ya hay un contrato sin firmar para estos datos, se retoma ese
+            if (await resumePendingDoc()) return;
+
             // Creamos documento usando el Template ID
             const res = await createZapSignDocument(
                 userName, 
@@ -74,7 +164,10 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
                 }
             }
             setSignUrl(finalSignUrl);
-            
+            if (finalSignUrl) {
+                savePendingDoc({ docToken: res.docToken, signUrl: finalSignUrl, owner });
+            }
+
             // Quedamos en estado de espera en la tarjeta trasera
             setStatus('waiting_signature');
             
@@ -95,8 +188,9 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
         }
     };
 
-    const handleVerifySignature = async () => {
-    if (!docToken) return;
+    const handleVerifySignature = async (token: string | null = docToken) => {
+    if (!token) return;
+    const docToken = token;
 
     setStatus('creating');
     const identity = await verifyZapSignIdentity(docToken);
@@ -154,6 +248,7 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
         }
     }
 
+    await clearPendingDoc();
     setStatus('success');
     if (onSignatureSuccess) {
         onSignatureSuccess(docToken, permanentUrl, identity.biometric);
@@ -164,6 +259,15 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
         setIsWebViewOpen(false);
         // Cuando el usuario cierra el WebView manualmente, intentamos verificar si terminó
         handleVerifySignature();
+    };
+
+    /** Descarta el contrato pendiente y genera uno nuevo */
+    const handleRestart = async () => {
+        await clearPendingDoc();
+        setDocToken(null);
+        setSignUrl(null);
+        setErrorMsg('');
+        setStatus('idle');
     };
 
     const onNavigationStateChange = (navState: any) => {
@@ -189,14 +293,25 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
             return (
                 <View style={{ width: '100%', gap: 8 }}>
                     <TouchableOpacity
+                        style={[styles.button, styles.buttonIdle]}
+                        onPress={handleScan}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="create-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
+                        <Text style={styles.buttonTextIdle}>Continuar validación</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
                         style={[styles.button, styles.buttonScanning]}
-                        onPress={handleVerifySignature}
+                        onPress={() => handleVerifySignature()}
                         activeOpacity={0.7}
                     >
                         <Ionicons name="refresh-outline" size={18} color={colors.accent} style={{ marginRight: 8 }} />
                         <Text style={styles.buttonTextScanning}>Ya firmé (Verificar)</Text>
                     </TouchableOpacity>
                     {errorMsg ? <Text style={{ color: colors.destructive, fontSize: 12, textAlign: 'center' }}>{errorMsg}</Text> : null}
+                    <TouchableOpacity onPress={handleRestart} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 4 }}>
+                        <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>¿Algo salió mal? Empezar de nuevo</Text>
+                    </TouchableOpacity>
                 </View>
             );
         }
