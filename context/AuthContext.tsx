@@ -115,6 +115,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user?.id]);
 
+  // Saldo en vivo: cuando llega o sale dinero se actualiza la cuenta (y con ella
+  // el inicio y los últimos movimientos) sin tener que deslizar para refrescar
+  useEffect(() => {
+    const accountId = account?.id;
+    if (!accountId) return;
+
+    const channel = supabase
+      .channel(`account-${accountId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'accounts', filter: `id=eq.${accountId}` },
+        (payload: any) => {
+          setAccount((prev) => (prev && prev.id === payload.new?.id ? { ...prev, ...payload.new } : prev));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [account?.id]);
+
   const checkSession = async () => {
     try {
       setLoading(true);

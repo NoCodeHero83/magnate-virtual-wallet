@@ -185,9 +185,9 @@ function ConfirmScreen() {
           <View style={styles.divider} />
 
           <View style={styles.cardRow}>
-            <Text style={styles.rowLabel}>CBU/Alias</Text>
+            <Text style={styles.rowLabel}>{/^\d{22}$/.test(identifier) ? "CBU/CVU" : "Alias"}</Text>
             <Text style={styles.rowValue} numberOfLines={1}>
-              {recipient}
+              {identifier}
             </Text>
           </View>
 

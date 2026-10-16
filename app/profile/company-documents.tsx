@@ -217,6 +217,7 @@ export default function CompanyDocumentsScreen() {
         description={alert.description}
         variant={alert.variant}
         confirmLabel="Entendido"
+        showCancel={false}
         onConfirm={() => setAlert((prev) => ({ ...prev, visible: false }))}
         onClose={() => setAlert((prev) => ({ ...prev, visible: false }))}
       />
