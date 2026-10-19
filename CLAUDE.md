@@ -1,37 +1,36 @@
 # Instrucciones del proyecto (léelas antes de tocar nada)
 
-## ⚠️ SEGURIDAD — ZapSign sandbox hardcodeado (QA)
+## ZapSign y entorno (desarrollo / producción) — se configura en Supabase
 
-Las credenciales de **sandbox** de ZapSign están **hardcodeadas en `app.config.js`**
-(`extra.EXPO_PUBLIC_ZAPSIGN_API_KEY` y `EXPO_PUBLIC_ZAPSIGN_TEMPLATE_ID`, y
-`EXPO_PUBLIC_APP_ENV: 'test'`). Esto es **SOLO para QA / demos**: permite que el build
-funcione sin configurar EAS, porque los builds de EAS se compilan en los servidores de EAS
-y solo las variables de entorno de **EAS** (no las del grupo de Codemagic) llegan al empaquetado.
+La app **no** tiene la API key de ZapSign. Todo pasa por la edge function `zapsign`
+(`supabase/functions/zapsign`), que lee de Supabase:
 
-La app resuelve estas vars en `config/environment.ts` vía `getEnvVar()` de `utils/env.ts`,
-que primero intenta `process.env.EXPO_PUBLIC_*` (inline de EAS cuando existe) y luego cae a
-`Constants.expoConfig.extra.*` (el valor embebido). Por eso funciona aunque EAS no tenga las vars.
+- `app_settings.app_environment`: `"development"` (ZapSign sandbox) o `"production"` (ZapSign real).
+- `app_settings.identity_verification_mode`: `"zapsign"` o `"simulated"`. Simulada da la verificación
+  por hecha sin ZapSign (en la app aparece "Simular verificación"). **Solo se permite en development**:
+  un trigger lo impide en producción y, al pasar a producción, vuelve solo a `"zapsign"`.
+- Credenciales en **Supabase Vault** (Project Settings → Vault), según el entorno:
+  `zapsign_api_key_sandbox`, `zapsign_template_id_sandbox` /
+  `zapsign_api_key_prod`, `zapsign_template_id_prod`, `zapsign_selfie_validation_type_prod` (opcional).
+
+Cada verificación queda en `identity_verifications`. En producción, `handle_new_user` **rechaza el alta**
+(`IDENTITY_NOT_VERIFIED`) si no hay una verificación real aprobada para ese email.
+
+### Para pasar a PRODUCCIÓN
+1. Cargar en Vault `zapsign_api_key_prod` y `zapsign_template_id_prod` (y opcionalmente
+   `zapsign_selfie_validation_type_prod` = `liveness-document-match` | `identity-verification-global`).
+2. `update app_settings set value = '"production"' where key = 'app_environment';`
 
 ⚠️ **NO usar `import { Constants } from 'expo-constants'`**: en `expo-constants` `Constants` es un
-export **solo de tipo** (`export type`); el named import queda `undefined` en runtime y reventar
-`environment.ts` al cargar la pantalla de registro. Usar el import por defecto (`import Constants
-from 'expo-constants'`), que es lo que hace `utils/env.ts`.
+export **solo de tipo** (`export type`); el named import queda `undefined` en runtime. Usar el import por
+defecto (`import Constants from 'expo-constants'`), que es lo que hace `utils/env.ts`.
 
-### Para PRODUCCIÓN REAL (OBLIGATORIO antes de release):
-- **NO** enviés el sandbox hardcodeado a producción.
-- En EAS → Environment Variables (visibility = **plain**), setear:
-  - `EXPO_PUBLIC_APP_ENV` = `production`
-  - `EXPO_PUBLIC_ZAPSIGN_API_KEY_PROD` = key real de producción
-  - `EXPO_PUBLIC_ZAPSIGN_TEMPLATE_ID_PROD` = template real de producción
-  - (opcional) `EXPO_PUBLIC_ZAPSIGN_SELFIE_VALIDATION_TYPE` = `liveness-document-match` | `identity-verification-global`
-- Borrá los valores hardcodeados de sandbox de `app.config.js` (dejá solo los `_PROD` leyendo de `process.env`).
-- En producción, `verifyZapSignIdentity` exige biometría estricta solo si
-  `EXPO_PUBLIC_ZAPSIGN_SELFIE_VALIDATION_TYPE` está configurado.
+`EXPO_PUBLIC_APP_ENV` (app.config.js, por defecto `test`) ahora solo controla la validación local del CUIT.
 
 ## Notas de build (Codemagic)
 - `codemagic.yaml` tiene `ios-workflow` y `android-workflow`, ambos usando el grupo `magnate-variables`.
-  Ese grupo debe contener al menos `EXPO_TOKEN` (para autenticar `eas build`). Las vars de ZapSign
-  ya van embebidas en el build vía `app.config.js`, así que no hacen falta en el grupo para QA.
+  Ese grupo debe contener al menos `EXPO_TOKEN` (para autenticar `eas build`). ZapSign no necesita
+  variables en el build (se configura en Supabase).
 - El paso de descarga del artifact usa `eas build --wait 2>&1 | tee` + `grep` de la URL + `curl`
   (no usar `eas build:download --profile/--output`, esos flags no existen en la CLI).
 - El `.env` local está gitignoreado y es solo para dev. No se sube a Codemagic.

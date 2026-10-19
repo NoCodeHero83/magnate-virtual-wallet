@@ -8,7 +8,7 @@ import { createZapSignDocument, getSignedDocumentUrl, getSignerUrl, verifyZapSig
 import * as SecureStore from 'expo-secure-store';
 import { Camera } from 'expo-camera';
 import { supabase } from '@/lib/supabase';
-import { isTestEnv } from '../../config/environment';
+import { getPublicAppConfig } from '../../services/appConfig.service';
 
 
 type ScanStatus = 'idle' | 'creating' | 'waiting_signature' | 'success' | 'error';
@@ -22,9 +22,6 @@ interface PendingDoc {
     signUrl: string;
     owner: string; // nombre + email para los que se generó el contrato
 }
-
-// Token que queda en zapsign_verification_id cuando se salta la verificación en QA
-const QA_SKIP_TOKEN = 'QA-SIN-ZAPSIGN';
 
 const ownerKey = (name: string, email: string) => `${name.trim().toLowerCase()}|${email.trim().toLowerCase()}`;
 
@@ -54,6 +51,12 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
     const [signUrl, setSignUrl] = useState<string | null>(null);
     const [isWebViewOpen, setIsWebViewOpen] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
+    // Verificación simulada: se activa en Supabase (app_settings) y solo en desarrollo
+    const [simulatedMode, setSimulatedMode] = useState(false);
+
+    useEffect(() => {
+        getPublicAppConfig().then((config) => setSimulatedMode(config.identity_verification === 'simulated'));
+    }, []);
 
     const owner = ownerKey(userName || '', userEmail || '');
 
@@ -126,6 +129,11 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
 
         if (status !== 'idle' && status !== 'error' && status !== 'waiting_signature') return;
 
+        if (simulatedMode) {
+            await handleSimulate();
+            return;
+        }
+
         try {
             // Solicitar permiso de cámara antes de abrir WebView
             const camPerm = await Camera.requestCameraPermissionsAsync();
@@ -148,6 +156,12 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
                 userEmail
             );
             console.log('[BiometricCard] createZapSignDocument response:', res);
+
+            // El entorno pasó a simulado después de abrir la pantalla
+            if (res.success && res.simulated && res.docToken) {
+                await completeSimulated(res.docToken);
+                return;
+            }
 
             if (!res.success || !res.signUrl || !res.docToken) {
                 setStatus('error');
@@ -265,18 +279,37 @@ export const BiometricCard: React.FC<BiometricCardProps> = ({ userName, userEmai
         handleVerifySignature();
     };
 
-    /** Solo QA (EXPO_PUBLIC_APP_ENV=test): da el paso por hecho sin ZapSign */
-    const handleSkip = async () => {
+    const completeSimulated = async (token: string) => {
         await clearPendingDoc();
         setErrorMsg('');
         setStatus('success');
-        onSignatureSuccess?.(QA_SKIP_TOKEN, null);
+        onSignatureSuccess?.(token, null, { valid: true, simulated: true });
     };
 
-    const skipButton = isTestEnv ? (
-        <TouchableOpacity onPress={handleSkip} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 6 }}>
+    /** Entorno de desarrollo con verificación simulada: el servidor la registra sin ZapSign */
+    const handleSimulate = async () => {
+        if (!userName || !userEmail) {
+            setErrorMsg('Completa tu nombre y email primero');
+            setStatus('error');
+            setTimeout(() => setStatus('idle'), 3000);
+            return;
+        }
+        setStatus('creating');
+        const res = await createZapSignDocument(userName, userEmail);
+        if (res.success && res.simulated && res.docToken) {
+            await completeSimulated(res.docToken);
+            return;
+        }
+        setSimulatedMode(false);
+        setStatus('error');
+        setErrorMsg(res.success ? 'La verificación simulada ya no está activa.' : res.error || 'Error al verificar');
+        setTimeout(() => setStatus('idle'), 3000);
+    };
+
+    const skipButton = simulatedMode ? (
+        <TouchableOpacity onPress={handleSimulate} activeOpacity={0.7} style={{ alignItems: 'center', paddingVertical: 6 }}>
             <Text style={{ color: colors.mutedForeground, fontSize: 12, textDecorationLine: 'underline' }}>
-                Saltar verificación (solo QA)
+                Simular verificación (entorno de desarrollo)
             </Text>
         </TouchableOpacity>
     ) : null;
