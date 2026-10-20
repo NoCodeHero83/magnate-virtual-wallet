@@ -51,6 +51,7 @@ export const PinPromptDialog: React.FC<PinPromptDialogProps> = ({
                     secureTextEntry
                     maxLength={PIN_LENGTH}
                     autoFocus
+                    caretHidden
                     placeholder={'•'.repeat(PIN_LENGTH)}
                     placeholderTextColor={colors.mutedForeground}
                     style={[styles.input, { color: colors.foreground, borderColor: colors.border }]}
@@ -101,6 +102,8 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md,
         fontSize: 24,
         letterSpacing: 12,
+        // El espaciado también se agrega después del último dígito: se compensa a la izquierda para centrar
+        paddingLeft: 12,
         textAlign: 'center',
         marginBottom: spacing.xl,
     },
