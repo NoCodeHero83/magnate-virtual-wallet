@@ -210,7 +210,9 @@ export default function ProfileScreen() {
     subtitle:
       user?.verification_status === "pending"
         ? "Cuenta en revisión"
-        : company
+        : user?.verification_status === "rejected"
+          ? "Cuenta rechazada"
+          : company
           ? "Persona Jurídica"
           : "Persona Física",
     isVerified: user?.verification_status === "verified",

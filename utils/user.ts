@@ -28,7 +28,7 @@ export function isBusinessAccount(user: Pick<User, 'account_type'> | null | unde
   return user?.account_type === 'business';
 }
 
-export type OperationalBlock = 'pending_review' | 'account_inactive';
+export type OperationalBlock = 'pending_review' | 'rejected' | 'account_inactive';
 
 /**
  * Motivo por el que el usuario no puede enviar / recibir dinero (null si puede).
@@ -39,6 +39,7 @@ export function getOperationalBlock(
   account?: { status?: string | null } | null,
 ): OperationalBlock | null {
   if (!user) return null;
+  if (user.verification_status === 'rejected') return 'rejected';
   if (user.verification_status !== 'verified') return 'pending_review';
   if (account && account.status !== 'active') return 'account_inactive';
   return null;

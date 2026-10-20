@@ -26,12 +26,11 @@ interface AuthContextType {
   clearSessionEndedReason: () => void;
 }
 
-/** Mensaje para cuentas que no pueden usar la app (null si puede ingresar) */
-function blockedStatusMessage(status?: string | null, reason?: string | null): string | null {
-  if (status === 'rejected') {
-    const detail = reason ? `\nMotivo: ${reason}` : '';
-    return `Tu solicitud de cuenta fue rechazada.${detail}\nSi crees que es un error, contacta a soporte.`;
-  }
+/**
+ * Mensaje para cuentas que no pueden usar la app (null si puede ingresar).
+ * Una cuenta rechazada sí entra: ve el motivo y corrige su documentación, pero no opera.
+ */
+function blockedStatusMessage(status?: string | null): string | null {
   if (status === 'suspended') {
     return 'Tu cuenta fue suspendida. Contacta a soporte para más información.';
   }
@@ -99,7 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const newStatus = payload.new?.verification_status;
           if (!newStatus || newStatus === prevStatus) return;
 
-          const blocked = blockedStatusMessage(newStatus, payload.new?.status_reason);
+          const blocked = blockedStatusMessage(newStatus);
           if (blocked) {
             endSession(blocked);
           } else {
@@ -239,8 +238,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       userData = buildFallbackUser(authUser);
     }
 
-    // 2. Cuentas rechazadas o suspendidas no pueden usar la app aunque tengan sesión guardada
-    const blocked = blockedStatusMessage(userData.verification_status, userData.status_reason);
+    // 2. Cuentas suspendidas no pueden usar la app aunque tengan sesión guardada
+    const blocked = blockedStatusMessage(userData.verification_status);
     if (blocked) {
       await endSession(blocked);
       return;
