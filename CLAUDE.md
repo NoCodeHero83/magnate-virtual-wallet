@@ -16,10 +16,14 @@ La app **no** tiene la API key de ZapSign. Todo pasa por la edge function `zapsi
 Cada verificación queda en `identity_verifications`. En producción, `handle_new_user` **rechaza el alta**
 (`IDENTITY_NOT_VERIFIED`) si no hay una verificación real aprobada para ese email.
 
+Las dos opciones se cambian desde el panel admin: **Configuración → Entorno y verificación de identidad**
+(funciones `admin_environment_settings` / `admin_set_environment_settings`, migración `20261020b`).
+
 ### Para pasar a PRODUCCIÓN
 1. Cargar en Vault `zapsign_api_key_prod` y `zapsign_template_id_prod` (y opcionalmente
    `zapsign_selfie_validation_type_prod` = `liveness-document-match` | `identity-verification-global`).
-2. `update app_settings set value = '"production"' where key = 'app_environment';`
+2. En el panel, elegir "Producción" (no se habilita hasta que estén las credenciales del paso 1).
+   Equivale a `update app_settings set value = '"production"' where key = 'app_environment';`
 
 ⚠️ **NO usar `import { Constants } from 'expo-constants'`**: en `expo-constants` `Constants` es un
 export **solo de tipo** (`export type`); el named import queda `undefined` en runtime. Usar el import por
