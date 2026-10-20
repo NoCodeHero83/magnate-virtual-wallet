@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, KeyboardAvoidingView, Platform } from 'react-na
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Button, Input, Toast, ToastType } from '../../components/ui';
+import { Button, Input, Toast, ToastType, DebugCodeNotice } from '../../components/ui';
 import { colors, spacing } from '../../theme';
 import { verifyDeviceLogin, resendDeviceLoginCode } from '../../services/auth.service';
 import { LogoIcon } from '../../components/LogoIcon';
@@ -17,11 +17,13 @@ const RESEND_COOLDOWN_SECONDS = 60;
  */
 export default function VerifyDeviceScreen() {
     const router = useRouter();
-    const params = useLocalSearchParams<{ email?: string; sent?: string }>();
+    const params = useLocalSearchParams<{ email?: string; sent?: string; debug?: string }>();
     const email = typeof params.email === 'string' ? params.email : '';
     const codeSent = params.sent !== 'false';
 
     const [otp, setOtp] = useState('');
+    // Solo en el entorno de pruebas con los códigos en pantalla activados
+    const [debugCode, setDebugCode] = useState(typeof params.debug === 'string' ? params.debug : '');
     const [isLoading, setIsLoading] = useState(false);
     const [resending, setResending] = useState(false);
     const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
@@ -70,6 +72,7 @@ export default function VerifyDeviceScreen() {
             if (res.success) {
                 showToast('Te enviamos un código nuevo', 'success');
                 setOtp('');
+                setDebugCode(res.debugCode ?? '');
                 setCooldown(RESEND_COOLDOWN_SECONDS);
             } else if (res.loginAgain) {
                 showToast(res.error || 'Vuelve a iniciar sesión');
@@ -109,6 +112,7 @@ export default function VerifyDeviceScreen() {
                     </View>
 
                     <View style={styles.inputContainer}>
+                        <DebugCodeNotice code={debugCode} />
                         <Input
                             label="Código de verificación"
                             value={otp}

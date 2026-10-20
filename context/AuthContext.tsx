@@ -17,7 +17,7 @@ interface AuthContextType {
   session: any;
   loading: boolean;
   isAuthenticated: boolean;
-  login: (email: string, pin: string) => Promise<{ success: boolean; error?: string; requireDeviceVerification?: boolean; codeSent?: boolean }>;
+  login: (email: string, pin: string) => Promise<{ success: boolean; error?: string; requireDeviceVerification?: boolean; codeSent?: boolean; debugCode?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   refreshAccount: () => Promise<void>;
@@ -283,6 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           success: true,
           requireDeviceVerification: !!result.requireDeviceVerification,
           codeSent: result.codeSent,
+          debugCode: result.debugCode,
         };
       } else {
         return { success: false, error: result.error };

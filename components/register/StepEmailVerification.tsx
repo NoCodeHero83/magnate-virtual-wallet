@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { DebugCodeNotice } from '../ui/DebugCodeNotice';
 import { colors, spacing, borderRadius } from '../../theme';
 import { requestSignupEmailCode, verifySignupEmailCode } from '../../services/email.service';
 
@@ -13,6 +14,8 @@ const RESEND_COOLDOWN_SECONDS = 60;
 export interface CodeRequestInfo {
   email: string;
   at: number;
+  /** Solo en el entorno de pruebas con los códigos en pantalla activados */
+  debugCode?: string;
 }
 
 interface StepEmailVerificationProps {
@@ -74,13 +77,13 @@ export const StepEmailVerification: React.FC<StepEmailVerificationProps> = ({
       setError(null);
       const res = await requestSignupEmailCode(email.trim(), firstName.trim() || email.split('@')[0]);
       if (res.success) {
-        onCodeRequested({ email: normalize(email), at: Date.now() });
+        onCodeRequested({ email: normalize(email), at: Date.now(), debugCode: res.debugCode });
         setNow(Date.now());
         setInfo('Te enviamos un código de 6 dígitos a tu correo.');
       } else {
         if (res.code === 'TOO_SOON') {
           // El servidor ya tiene un código reciente: arrancar la cuenta regresiva igual
-          onCodeRequested({ email: normalize(email), at: Date.now() });
+          onCodeRequested({ email: normalize(email), at: Date.now(), debugCode: sameEmailRequest?.debugCode });
           setNow(Date.now());
         }
         setEmailInUse(res.code === 'EMAIL_IN_USE');
@@ -137,6 +140,7 @@ export const StepEmailVerification: React.FC<StepEmailVerificationProps> = ({
           </>
         ) : (
           <>
+            <DebugCodeNotice code={sameEmailRequest?.debugCode} />
             <Input
               label="Código de verificación"
               keyboardType="number-pad"

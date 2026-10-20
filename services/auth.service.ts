@@ -68,6 +68,8 @@ export interface AuthResult {
   codeSent?: boolean;
   /** Registro: estado con el que quedó la cuenta */
   verificationStatus?: VerificationStatus;
+  /** Código enviado por email, solo en el entorno de pruebas con los códigos en pantalla activados */
+  debugCode?: string;
 }
 // Resultado del RPC login_with_pin (el PIN se valida en el servidor)
 interface PinLoginResult {
@@ -93,6 +95,8 @@ interface PinLoginResult {
   attempts_left?: number;
   /** DEVICE_VERIFICATION_REQUIRED: false si ya había un código reciente (sigue valiendo) */
   code_sent?: boolean;
+  /** Entorno de pruebas con los códigos en pantalla activados */
+  debug_code?: string;
   /** PIN_LOCKED: segundos hasta poder reintentar */
   retry_after_seconds?: number;
   status_reason?: string | null;
@@ -264,7 +268,12 @@ export async function loginWithPin(
       return { success: false, error: "Error de conexión" };
     }
     if (result.error === "DEVICE_VERIFICATION_REQUIRED") {
-      return { success: true, requireDeviceVerification: true, codeSent: result.code_sent !== false };
+      return {
+        success: true,
+        requireDeviceVerification: true,
+        codeSent: result.code_sent !== false,
+        debugCode: result.debug_code,
+      };
     }
     if (!result.success || !result.user_id || !result.session) {
       return { success: false, error: pinLoginErrorMessage(result) };
@@ -310,7 +319,7 @@ export async function resendDeviceLoginCode(email: string): Promise<AuthResult &
     if (error) return { success: false, error: "Error de conexión" };
 
     const result = data as PinLoginResult | null;
-    if (result?.success) return { success: true };
+    if (result?.success) return { success: true, debugCode: result.debug_code };
     return {
       success: false,
       loginAgain: result?.error === "LOGIN_AGAIN",
@@ -605,7 +614,7 @@ export interface PinChangeResult extends AuthResult {
 }
 
 const pinChangeResult = (data: any): PinChangeResult => {
-  if (data?.success) return { success: true };
+  if (data?.success) return { success: true, debugCode: data.debug_code ?? undefined };
   const code = data?.error as string | undefined;
   let error = (code && PIN_CHANGE_ERRORS[code]) || "No se pudo completar la operación";
   if (code === "INVALID_PIN" && typeof data?.attempts_left === "number") {

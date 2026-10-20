@@ -20,7 +20,7 @@ import {
   requestPinChangeCode,
   confirmPinChange,
 } from "../../services/auth.service";
-import { AlertDialog, Toast, Button } from "../../components/ui";
+import { AlertDialog, Toast, Button, DebugCodeNotice } from "../../components/ui";
 
 
 type Step = "current" | "otp" | "new" | "confirm";
@@ -40,6 +40,8 @@ export default function ChangePinScreen() {
   const [step, setStep] = useState<Step>("current");
   const [currentPin, setCurrentPin] = useState("");
   const [otpCode, setOtpCode] = useState("");
+  // Solo en el entorno de pruebas con los códigos en pantalla activados
+  const [debugCode, setDebugCode] = useState("");
   const [newPin, setNewPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
   const [loading, setLoading] = useState(false);
@@ -133,6 +135,7 @@ export default function ChangePinScreen() {
     setLoading(false);
     if (result.success) {
       showToast("Código enviado a tu email", "success");
+      setDebugCode(result.debugCode ?? "");
       setStep("otp");
     } else {
       showToast(result.error || "No se pudo enviar el código");
@@ -265,6 +268,7 @@ export default function ChangePinScreen() {
         {/* Text */}
         <Text style={styles.title}>{getTitle()}</Text>
         <Text style={styles.subtitle}>{getSubtitle()}</Text>
+        {step === "otp" && <DebugCodeNotice code={debugCode} />}
 
         {/* Dots */}
         <View style={styles.dotsContainer}>

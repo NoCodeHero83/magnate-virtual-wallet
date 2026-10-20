@@ -128,7 +128,11 @@ export default function LoginScreen() {
                 // Dispositivo nuevo: validar el código enviado por email
                 router.push({
                     pathname: '/(auth)/verify-device',
-                    params: { email: loginEmail.trim().toLowerCase(), sent: String(result.codeSent !== false) },
+                    params: {
+                        email: loginEmail.trim().toLowerCase(),
+                        sent: String(result.codeSent !== false),
+                        ...(result.debugCode ? { debug: result.debugCode } : {}),
+                    },
                 });
                 setPin('');
             } else if (result.success) {

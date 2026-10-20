@@ -21,6 +21,8 @@ export type SignupOtpErrorCode = keyof typeof SIGNUP_OTP_ERRORS;
 export interface SignupOtpResponse extends NotificationResponse {
   /** Código de error del servidor (ej. EMAIL_IN_USE, TOO_SOON) */
   code?: SignupOtpErrorCode;
+  /** Código enviado, solo en el entorno de pruebas con los códigos en pantalla activados */
+  debugCode?: string;
 }
 
 const otpErrorCode = (raw?: string | null): SignupOtpErrorCode | undefined =>
@@ -40,7 +42,7 @@ export async function requestSignupEmailCode(
   firstName: string,
 ): Promise<SignupOtpResponse> {
   try {
-    const { error } = await supabase.rpc("request_signup_email_otp", {
+    const { data, error } = await supabase.rpc("request_signup_email_otp", {
       p_email: email,
       p_first_name: firstName,
     } as any);
@@ -53,7 +55,7 @@ export async function requestSignupEmailCode(
         error: otpErrorMessage(error.message, "No se pudo enviar el código por correo. Puedes reintentar."),
       };
     }
-    return { success: true };
+    return { success: true, debugCode: (data as any)?.debug_code ?? undefined };
   } catch (error: any) {
     console.error("[NOTIFICATION] Error inesperado en pre-signup:", error);
     return { success: false, error: error.message || "Error al procesar la solicitud" };
