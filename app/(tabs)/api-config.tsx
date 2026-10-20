@@ -91,8 +91,10 @@ function ApiConfigScreen() {
 
     const loadApiAccess = useCallback(async () => {
         try {
-            const { data, error } = await supabase.rpc('get_api_access');
+            const { data: raw, error } = await supabase.rpc('get_api_access');
             if (error) throw error;
+            // get_api_access no está en los tipos generados de la base
+            const data = raw as ApiAccessData | null;
 
             if (data) {
                 setApiData(data);

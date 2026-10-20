@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { supabase } from '../lib/supabase';
+import type { AppVersion } from '../types/database.types';
 import { compareVersions } from '../utils/version';
 
 interface UpdateInfo {
@@ -27,7 +28,7 @@ export const useAppUpdate = () => {
         const platform = Platform.OS === 'ios' ? 'ios' : 'android';
         
         // Fetch the latest version for the current platform
-        const { data, error } = await supabase
+        const { data: row, error } = await supabase
           .from('app_versions')
           .select('*')
           .eq('platform', platform)
@@ -44,6 +45,7 @@ export const useAppUpdate = () => {
             return;
         }
 
+        const data = row as AppVersion | null;
         if (data) {
           const currentVersion = Constants.expoConfig?.version || '1.0.0';
           const latestVersion = data.version;

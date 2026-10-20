@@ -166,7 +166,7 @@ const styles = StyleSheet.create({
     },
     header: {
         alignItems: 'center',
-        marginBottom: spacing.xxl,
+        marginBottom: spacing['2xl'],
     },
     title: {
         fontSize: 24,
